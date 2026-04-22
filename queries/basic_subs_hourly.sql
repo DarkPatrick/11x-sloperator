@@ -5,7 +5,12 @@ with {{days_before}} as `days_before`,
 -- нужен на тот случай, если в default.ug_subscriptions_events не будет данных за какой-то промежуток времени
 dates as (
     select
-        arrayJoin(arrayMap(x -> toStartOfInterval(now(), interval 1 hour) - interval x * 1 hour, range(1, 1 + 24 * `days_before`))) as `dt`
+        arrayJoin(
+            arrayMap(
+                x -> toStartOfInterval(now(), interval 1 hour) - interval x * 1 hour, 
+                range(1, 1 + if(`days_before` > 0, 24 * `days_before`, toHour(now())))
+            )
+        ) as `dt`
 )
 
 
@@ -17,7 +22,7 @@ select
     -- toStartOfInterval(sub.`datetime`, interval 1 hour) as `dt`,
     `dat`.`dt` as `dt`,
     -- уникальная связка из subscription_id и product_code
-    uniqExact((`sub`.`subscription_id`, `sub`.`product_code`)) as `subscription_cnt`
+    uniqExactIf((`sub`.`subscription_id`, `sub`.`product_code`), coalesce(`sub`.`subscription_id`, '') != '') as `subscription_cnt`
 from
     -- алиасы обязательны даже если в селекте только одна таблица
     -- алиасы таблиц тоже обязательно оборачивать в backtick

@@ -13,6 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY main.py /app/main.py
 COPY clickhouse_worker.py /app/clickhouse_worker.py
 COPY vpn_supervisor.py /app/vpn_supervisor.py
+COPY clickhouse_supervisor.py /app/clickhouse_supervisor.py
+COPY slack_worker.py /app/slack_worker.py
 COPY docker /app/docker
 COPY vpn /app/vpn
 COPY requirements.txt /app/requirements.txt

@@ -16,7 +16,8 @@ import logging
 MAX_SAFE_JS_INT = 2**53 - 1
 
 
-logger = logging.getLogger("clickhouse_worker")
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 
