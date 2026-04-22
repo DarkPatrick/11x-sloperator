@@ -1,5 +1,5 @@
 -- в каком окне выгружаем данные
-with {{days_before}} as `days_before`,
+with {days_before} as `days_before`,
 
 -- массив дат
 -- нужен на тот случай, если в default.ug_subscriptions_events не будет данных за какой-то промежуток времени
@@ -28,7 +28,7 @@ from
     -- алиасы таблиц тоже обязательно оборачивать в backtick
     dates as `dat`
 left join
-    default.ug_subscriptions_events as `sub`
+    `default`.`ug_subscriptions_events` as `sub`
 on
     `dat`.`dt` = toStartOfInterval(`sub`.`datetime`, interval 1 hour)
     
