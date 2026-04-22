@@ -1,0 +1,11 @@
+services:
+  slack-bot:
+    build: .
+    container_name: slack-vpn-bot
+    env_file:
+      - .env
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    restart: "no"

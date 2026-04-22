@@ -1,0 +1,16 @@
+slack-sdk==3.41.0
+python-dotenv==1.2.2
+certifi==2026.2.25
+slack-bolt==1.28.0
+numpy==2.4.4
+pandas==3.0.2
+python-dateutil==2.9.0.post0
+six==1.17.0
+clickhouse_connect==0.15.1
+lz4==4.4.5
+pytz==2026.1.post1
+urllib3==2.6.3
+zstandard==0.25.0
+charset_normalizer==3.4.7
+idna==3.12
+requests==2.33.1
