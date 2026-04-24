@@ -1,0 +1,95 @@
+members -> subscribers, %:
+  - numerator: subscriber_cnt
+  - denominator: members
+  - percentage: true
+  - distribution: "bernoulli"
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "conversion rate from members to subscribers"
+    
+trials share, %:
+  - numerator: access_trial_cnt
+  - denominator: access_cnt
+  - percentage: true
+  - distribution: "bernoulli"
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "share of trials among subscriptions"
+
+members -> buyers, %:
+  - numerator: buyer_cnt
+  - denominator: members
+  - percentage: true
+  - distribution: "bernoulli"
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "conversion rate from members to buyers"
+
+trial -> charge, %:
+  - numerator: charged_trial_cnt
+  - denominator: access_trial_cnt
+  - percentage: true
+  - distribution: "bernoulli"
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "conversion rate from trial to charge"
+
+active trial -> charge, %:
+  - numerator: active_charged_trial_cnt
+  - denominator: active_trial_cnt
+  - percentage: true
+  - distribution: "bernoulli"
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "conversion rate from active trial to charge"
+
+pending trials share, %:
+  - numerator: pending_trial_cnt
+  - denominator: access_trial_cnt
+  - percentage: true
+  - distribution: "bernoulli"
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "share of pending trials due payment date"
+
+churn 14d, %:
+  - numerator: cancel_14d_cnt
+  - denominator: charge_cnt
+  - percentage: true
+  - distribution: "bernoulli"
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "share of charges who churned within 14 days since payment date"
+
+refund 14d, %:
+  - numerator: refund_14d_cnt
+  - denominator: charge_cnt
+  - percentage: true
+  - distribution: "bernoulli"
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "share of charges who got refund within 14 days since payment date"
+
+arppu, $:
+  - numerator: revenue
+  - denominator: buyer_cnt
+  - percentage: false
+  - variiance: arppu_var
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "average revenue per paying user"
+
+arpu, $:
+  - numerator: revenue
+  - denominator: members
+  - percentage: false
+  - variiance: arpu_var
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "average revenue per user"
+
+aov, $:
+  - numerator: revenue
+  - denominator: charge_cnt
+  - percentage: false
+  - variiance: aov_var
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "average order value"
+
+members -> install, %:
+  - numerator: install_cnt
+  - denominator: members
+  - percentage: true
+  - distribution: "bernoulli"
+  - platforms: ["UG_WEB"]
+  - description: "conversion rate from users in mobweb to users who installed the app"

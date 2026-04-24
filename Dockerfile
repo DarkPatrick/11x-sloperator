@@ -15,7 +15,9 @@ COPY clickhouse_worker.py /app/clickhouse_worker.py
 COPY vpn_supervisor.py /app/vpn_supervisor.py
 COPY clickhouse_supervisor.py /app/clickhouse_supervisor.py
 COPY slack_worker.py /app/slack_worker.py
+COPY stats.py /app/stats.py
 COPY docker /app/docker
+COPY queries /app/queries
 COPY vpn /app/vpn
 COPY requirements.txt /app/requirements.txt
 

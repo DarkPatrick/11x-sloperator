@@ -1,5 +1,6 @@
 with
     {exp_id} as `exp_id`,
+    toDate('{date_filter}') as `date_filter`,
     {where_sql} as `where_condition`,
     {having_sql} as `having_condition`,
     (
@@ -18,23 +19,28 @@ with
 
 select
     `urew`.`unified_id`,
-    `urew`.`experiments.variation`[indexOf(`urew`.`experiments.id`, 7304)] as `variation`,
-    min(`urew`.`datetime`) AS `exp_start_dt`,
-    argMin(`urew`.`rights`, `urew`.`datetime`) AS `rights`,
-    argMin(`urew`.`user_id`, `urew`.`datetime`) AS `user_id`,
-    argMin(`urew`.`country`, `urew`.`datetime`) AS `country`,
-    argMin(`urew`.`auth`, `urew`.`datetime`) AS `auth`,
-    [('platform', toString(argMin(`urew`.`platform`, `urew`.`datetime`))), ('value', toString(argMin(`urew`.`value`, `urew`.`datetime`)))] as `params`
+    `urew`.`experiments.variation`[indexOf(`urew`.`experiments.id`, `exp_id`)] as `variation`,
+    minIf(toUnixTimestamp(`urew`.`datetime`), `urew`.`event` != 'App Install') AS `exp_start_dt`,
+    argMinIf(`urew`.`rights`, `urew`.`datetime`, `urew`.`event` != 'App Install') AS `rights`,
+    argMinIf(`urew`.`user_id`, `urew`.`datetime`, `urew`.`event` != 'App Install') AS `user_id`,
+    argMinIf(`urew`.`item_id`, `urew`.`datetime`, `urew`.`event` = 'App Install') AS `payment_account_id`,
+    argMinIf(`urew`.`country`, `urew`.`datetime`, `urew`.`event` != 'App Install') AS `country`,
+    argMinIf(`urew`.`auth`, `urew`.`datetime`, `urew`.`event` != 'App Install') AS `auth`
+    -- , [('platform', toString(argMin(`urew`.`platform`, `urew`.`datetime`))), ('value', toString(argMin(`urew`.`value`, `urew`.`datetime`)))] as `params`
 from
     `default`.`ug_rt_events_web` as `urew`
 where
-    `urew`.`date` between toDate(tupleElement(exp_data,2)) and if(tupleElement(exp_data,3) < tupleElement(exp_data,2), toDate(now()), toDate(tupleElement(exp_data,3)))
+    `urew`.`date` = `date_filter`
 and
     `urew`.`datetime` between toDateTime(tupleElement(exp_data,2)) and if(tupleElement(exp_data,3) < tupleElement(exp_data,2), toDateTime(now()), toDateTime(tupleElement(exp_data,3)))
 and
     `urew`.`unified_id` > 0
-and
+and (
     (where_condition)
+    or `urew`.`event` = 'App Install'
+)
+and
+    `variation` > 0
 group by
     `unified_id`,
     `variation`

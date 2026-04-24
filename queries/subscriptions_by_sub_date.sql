@@ -1,6 +1,6 @@
 with
-    toDate('{date_start}') as date_start,
-    toDate('{date_end}') as date_end
+    toDate({date_start}) as date_start,
+    toDate({date_end}) as date_end
 
 select
     *,
@@ -16,7 +16,7 @@ select
     end as `refund_revenue`,
     arraySum(arrayMap(x -> x.2 * 
         case
-            when lower(`platform`) like '%ios%' and x.1 >= toDate(`sub_dt`) and x.1 < toDate(`sub_dt`) + interval 1 year then 0.7
+            when lower(`platform`) like '%ios%' and x.1 >= toDate(`subscribed_dt`) and x.1 < toDate(`subscribed_dt`) + interval 1 year then 0.7
             when lower(`platform`) like '%ios%' or lower(`platform`) like '%and%' then 0.85
             else 1
         end
@@ -26,9 +26,11 @@ from (
     select
         `use`.`subscription_id` as `subscription_id`,
         `use`.`product_code` as `product_code`,
-        minIf(`use`.`datetime`, `use`.`event` = 'Subscribed') as `sub_dt`,
-        minIf(`use`.`datetime`, `use`.`event` = 'Charged') as `ch_dt`,
-        minIf(`use`.`datetime`, `use`.`event` = 'Canceled') as `can_dt`,
+        minIf(toUnixTimestamp(`use`.`datetime`), `use`.`event` = 'Subscribed') as `subscribed_dt`,
+        minIf(toUnixTimestamp(`use`.`datetime`), `use`.`event` = 'Charged') as `charge_dt`,
+        minIf(toUnixTimestamp(`use`.`datetime`), `use`.`event` = 'Canceled') as `cancel_dt`,
+        minIf(toUnixTimestamp(`use`.`datetime`), `use`.`event` = 'Refunded') as `refund_dt`,
+        minIf(toUnixTimestamp(`use`.`datetime`), `use`.`event` in ('Upgrade', 'Crossgrade')) as `upgrade_dt`,
         argMinIf(`use`.`platform`, `use`.`datetime`, `use`.`event` = 'Subscribed') as `platform`,
         argMinIf(
             case
@@ -43,6 +45,9 @@ from (
         argMinIf(`use`.`user_id`, `use`.`datetime`, `use`.`event` = 'Subscribed') as `user_id`,
         argMinIf(`use`.`unified_id`, `use`.`datetime`, `use`.`event` = 'Subscribed') as `unified_id`,
         argMinIf(`use`.`payment_account_id`, `use`.`datetime`, `use`.`event` = 'Subscribed') as `payment_account_id`,
+        argMinIf(`use`.`service_name`, `use`.`datetime`, `use`.`event` = 'Subscribed') as `service_name`,
+        argMinIf(`use`.`duration_count`, `use`.`datetime`, `use`.`event` = 'Subscribed') as `duration_count`,
+        if (`duration_count` = 0 and `service_name` = '' and `trial` = 0, 1, 0) as `is_otp`,
         argMinIf(`use`.`usd_price`, `use`.`datetime`, `use`.`event` = 'Charged') as `revenue_gross`,
         argMinIf(
             case
@@ -70,10 +75,12 @@ from (
     from
         `default`.`ug_subscriptions_events` as `use`
     where
-        `use`.`event` in ('Subscribed', 'Charged', 'Canceled')
+        `use`.`date` >= date_start - interval 15 day
+    and
+        `use`.`event` in ('Subscribed', 'Charged', 'Canceled', 'Refunded', 'Crossgrade', 'Upgrade', 'Downgrade')
     group by
         `subscription_id`,
         `product_code`
     having
-        toDate(`sub_dt`) between date_start and date_end
+        toDate(`subscribed_dt`) between date_start - interval 15 day and date_end
 )

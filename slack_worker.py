@@ -1,6 +1,8 @@
 import os
 import logging
 from typing import Optional, Any
+from io import StringIO
+import pandas as pd
 
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -221,3 +223,137 @@ class SlackWorker:
         except SlackApiError as exc:
             logger.exception("Slack auth_test failed")
             raise SlackWorkerError(f"Slack auth_test failed: {exc}") from exc
+    
+    def get_thread_ts(self, event: dict[str, Any]) -> str:
+        """
+        Return thread_ts for replying in the same thread.
+        If message is not in a thread, returns root message ts.
+        """
+        thread_ts = event.get("thread_ts")
+        if thread_ts:
+            return thread_ts
+
+        ts = event.get("ts")
+        if not ts:
+            raise SlackWorkerError("Event does not contain ts or thread_ts")
+
+        return ts
+
+    def send_event_reply(self, event: dict[str, Any], text: str) -> str:
+        """
+        Reply in the same conversation and same thread as incoming event.
+        Works for DM, channel, group DM.
+        """
+        channel_id = event.get("channel")
+        if not channel_id:
+            raise SlackWorkerError("Event does not contain channel")
+
+        thread_ts = self.get_thread_ts(event)
+        return self.send_message(
+            channel_id=channel_id,
+            text=text,
+            thread_ts=thread_ts,
+            unfurl_links=False,
+            unfurl_media=False,
+        )
+
+    def send_event_root_reply(self, event: dict[str, Any], text: str) -> str:
+        """
+        Send reply in the same conversation but NOT in thread.
+        Usually not what you need for exp# handler, but useful sometimes.
+        """
+        channel_id = event.get("channel")
+        if not channel_id:
+            raise SlackWorkerError("Event does not contain channel")
+
+        return self.send_message(
+            channel_id=channel_id,
+            text=text,
+            thread_ts=None,
+            unfurl_links=False,
+            unfurl_media=False,
+        )
+
+    def update_event_reply(self, event: dict[str, Any], ts: str, text: str) -> str:
+        """
+        Update a previously sent message in the same channel as event.
+        """
+        channel_id = event.get("channel")
+        if not channel_id:
+            raise SlackWorkerError("Event does not contain channel")
+
+        return self.update_message(channel_id=channel_id, ts=ts, text=text)
+
+    def format_table_for_slack(
+        self,
+        table: Any,
+        max_len: int = 3500,
+    ) -> tuple[str, bool]:
+        """
+        Format DataFrame / list[dict] / plain object as Slack-friendly text.
+        Returns (formatted_text, is_truncated).
+        """
+        rendered = ""
+
+        if pd is not None and isinstance(table, pd.DataFrame):
+            if table.empty:
+                rendered = "Пустая таблица"
+            else:
+                rendered = table.to_string(index=False)
+        elif isinstance(table, list):
+            if not table:
+                rendered = "Пустая таблица"
+            else:
+                # list[dict] -> simple aligned text
+                if all(isinstance(row, dict) for row in table):
+                    headers = list({k for row in table for k in row.keys()})
+                    rows = [[str(row.get(h, "")) for h in headers] for row in table]
+                    widths = [
+                        max(len(str(h)), *(len(r[i]) for r in rows))
+                        for i, h in enumerate(headers)
+                    ]
+                    header_line = " | ".join(str(h).ljust(widths[i]) for i, h in enumerate(headers))
+                    sep_line = "-+-".join("-" * widths[i] for i in range(len(headers)))
+                    row_lines = [
+                        " | ".join(r[i].ljust(widths[i]) for i in range(len(headers)))
+                        for r in rows
+                    ]
+                    rendered = "\n".join([header_line, sep_line, *row_lines])
+                else:
+                    rendered = "\n".join(str(x) for x in table)
+        else:
+            rendered = str(table)
+
+        truncated = False
+        if len(rendered) > max_len:
+            rendered = rendered[:max_len] + "\n... <truncated>"
+            truncated = True
+
+        return f"```{rendered}```", truncated
+
+    def upload_csv_file(
+        self,
+        *,
+        title: str,
+        content: str,
+        channel_id: str,
+        thread_ts: Optional[str] = None,
+        filename: Optional[str] = None,
+    ) -> Any:
+        """
+        Upload CSV file to Slack.
+        content: CSV as string.
+        """
+        filename = filename or f"{title}.csv"
+
+        try:
+            return self.client.files_upload_v2(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                title=title,
+                filename=filename,
+                content=content,
+            )
+        except SlackApiError as exc:
+            logger.exception("Failed to upload CSV file %s", filename)
+            raise SlackWorkerError(f"Failed to upload CSV file: {exc}") from exc
