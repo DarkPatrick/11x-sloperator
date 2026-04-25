@@ -66,7 +66,7 @@ arppu, $:
   - numerator: revenue
   - denominator: buyer_cnt
   - percentage: false
-  - variiance: arppu_var
+  - variance: arppu_var
   - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
   - description: "average revenue per paying user"
 
@@ -74,7 +74,7 @@ arpu, $:
   - numerator: revenue
   - denominator: members
   - percentage: false
-  - variiance: arpu_var
+  - variance: arpu_var
   - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
   - description: "average revenue per user"
 
@@ -82,7 +82,7 @@ aov, $:
   - numerator: revenue
   - denominator: charge_cnt
   - percentage: false
-  - variiance: aov_var
+  - variance: arppu_var
   - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
   - description: "average order value"
 

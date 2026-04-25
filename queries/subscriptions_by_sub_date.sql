@@ -47,7 +47,11 @@ from (
         argMinIf(`use`.`payment_account_id`, `use`.`datetime`, `use`.`event` = 'Subscribed') as `payment_account_id`,
         argMinIf(`use`.`service_name`, `use`.`datetime`, `use`.`event` = 'Subscribed') as `service_name`,
         argMinIf(`use`.`duration_count`, `use`.`datetime`, `use`.`event` = 'Subscribed') as `duration_count`,
-        if (`duration_count` = 0 and `service_name` = '' and `trial` = 0, 1, 0) as `is_otp`,
+        if (
+            (`duration_count` = 0 and `service_name` = '' and `trial` = 0)
+                or (product_id like 'onetime%' or product_id like '%|paid_trial')
+            , 1, 0
+        ) as `is_otp`,
         argMinIf(`use`.`usd_price`, `use`.`datetime`, `use`.`event` = 'Charged') as `revenue_gross`,
         argMinIf(
             case
@@ -83,4 +87,6 @@ from (
         `product_code`
     having
         toDate(`subscribed_dt`) between date_start - interval 15 day and date_end
+    and
+        lower(`funnel_source`) not like '%email%'
 )

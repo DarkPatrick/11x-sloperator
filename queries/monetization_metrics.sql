@@ -93,13 +93,20 @@
         varSampIf(if(`sta`.`subscribed_dt` between `eut`.`exp_start_dt` and `eut`.`exp_start_dt` + 604800 and `sta`.`charge_dt` between `sta`.`subscribed_dt` and `sta`.`first_charge_expected_dt` + 86400 and `sta`.`is_otp` = 0, `sta`.`revenue`, 0) - if(`sta`.`subscribed_dt` between `eut`.`exp_start_dt` and `eut`.`exp_start_dt` + 604800 and `sta`.`charge_dt` between `sta`.`subscribed_dt` and `sta`.`first_charge_expected_dt` + 86400 and `sta`.`refund_dt` between `sta`.`charge_dt` and `sta`.`charge_dt` + 1209600, `sta`.`refund_revenue`, 0), `sta`.`subscribed_dt` between `eut`.`exp_start_dt` and `eut`.`exp_start_dt` + 604800 and `sta`.`charge_dt` between `sta`.`subscribed_dt` and `sta`.`first_charge_expected_dt` + 86400 and `sta`.`is_otp` = 0) as `arppu_var`,
         uniqIf((`sta`.`subscription_id`, `sta`.`product_id`), `sta`.`subscribed_dt` between `eut`.`exp_start_dt` and `eut`.`exp_start_dt` + 604800 and `sta`.`charge_dt` between `sta`.`subscribed_dt` and `sta`.`first_charge_expected_dt` + 86400 and `sta`.`cancel_dt` between `sta`.`charge_dt` and `sta`.`charge_dt` + 1209600) as `cancel_14d_cnt`,
         uniqIf((`sta`.`subscription_id`, `sta`.`product_id`), `sta`.`subscribed_dt` between `eut`.`exp_start_dt` and `eut`.`exp_start_dt` + 604800 and `sta`.`charge_dt` between `sta`.`subscribed_dt` and `sta`.`first_charge_expected_dt` + 86400 and `sta`.`cancel_dt` between `sta`.`charge_dt` and `sta`.`charge_dt` + 2592000) as `cancel_1m_cnt`
-    from
-        {exp_users_table} as `eut`
-    left join
-        {subscription_table} as `sta`
+    from (
+        select distinct *
+        from {exp_users_table}
+    ) as `eut`
+    left join (
+        select distinct *
+        from {subscription_table}
+    )as `sta`
     on
         `eut`.`unified_id` = `sta`.`unified_id`
     group by
+        `dt`,
+        `variation`
+    order by
         `dt`,
         `variation`
     -- ) as s1

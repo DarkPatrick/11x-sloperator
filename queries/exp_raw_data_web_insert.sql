@@ -29,12 +29,18 @@ select
     -- , [('platform', toString(argMin(`urew`.`platform`, `urew`.`datetime`))), ('value', toString(argMin(`urew`.`value`, `urew`.`datetime`)))] as `params`
 from
     `default`.`ug_rt_events_web` as `urew`
+left join
+    {exp_users_table} as `eut`
+on
+    `urew`.`unified_id` = `eut`.`unified_id`
 where
     `urew`.`date` = `date_filter`
 and
     `urew`.`datetime` between toDateTime(tupleElement(exp_data,2)) and if(tupleElement(exp_data,3) < tupleElement(exp_data,2), toDateTime(now()), toDateTime(tupleElement(exp_data,3)))
 and
     `urew`.`unified_id` > 0
+and
+    `eut`.`unified_id` = 0
 and (
     (where_condition)
     or `urew`.`event` = 'App Install'

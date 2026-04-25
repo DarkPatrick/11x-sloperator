@@ -201,12 +201,13 @@ def create_experiment_users_table(exp_info: dict) -> str:
         query_part_1 = f"insert into sandbox.ug_monetization_sloperator_{table_name}"
         if "UG_WEB" in exp_info["clients_list"]:
             query_part_2 = get_query(
-            "exp_raw_data_web", 
+            "exp_raw_data_web_insert", 
             params={
                 "exp_id": exp_id, 
                 "where_sql": where_filter, 
                 "having_sql": 1,
-                "date_filter": current_day.strftime("%Y-%m-%d")
+                "date_filter": current_day.strftime("%Y-%m-%d"),
+                "exp_users_table": f"sandbox.ug_monetization_sloperator_{table_name}"
             }
         )
         query = query_part_1 + "\n" + query_part_2

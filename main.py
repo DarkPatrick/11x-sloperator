@@ -76,7 +76,7 @@ def handle_exp_message(message, say, logger):
     )
 
     try:
-        table, summary = calculate_exp_info(exp_id)
+        table, table_cum, stat_results, summary = calculate_exp_info(exp_id)
 
         formatted_table, truncated = slack.format_table_for_slack(table)
 
@@ -91,6 +91,20 @@ def handle_exp_message(message, say, logger):
             title=f"Experiment #{exp_id} - Таблица",
             filename=f"experiment_{exp_id}_table.csv",
             content=table.to_csv(index=False),
+            thread_ts=progress_ts,
+            channel_id=event["channel"],
+        )
+        slack.upload_csv_file(
+            title=f"Experiment #{exp_id} - Кумулятивная таблица по дням",
+            filename=f"experiment_{exp_id}_table_cum.csv",
+            content=table_cum.to_csv(index=False),
+            thread_ts=progress_ts,
+            channel_id=event["channel"],
+        )
+        slack.upload_csv_file(
+            title=f"Experiment #{exp_id} - Статистика по метрикам",
+            filename=f"experiment_{exp_id}_table_cum.csv",
+            content=stat_results.to_csv(index=False),
             thread_ts=progress_ts,
             channel_id=event["channel"],
         )

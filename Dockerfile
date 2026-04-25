@@ -18,6 +18,7 @@ COPY slack_worker.py /app/slack_worker.py
 COPY stats.py /app/stats.py
 COPY docker /app/docker
 COPY queries /app/queries
+COPY metrics.yaml /app/metrics.yaml
 COPY vpn /app/vpn
 COPY requirements.txt /app/requirements.txt
 

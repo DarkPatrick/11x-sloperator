@@ -14,3 +14,8 @@ zstandard==0.25.0
 charset_normalizer==3.4.7
 idna==3.12
 requests==2.33.1
+PyYAML==6.0.3
+scipy==1.17.1
+packaging==26.2
+patsy==1.0.2
+statsmodels==0.14.6
