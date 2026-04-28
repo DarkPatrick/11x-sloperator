@@ -21,7 +21,9 @@ select
             else 1
         end
         , `all_charges_arr_uniq`)
-    ) as `lifetime_revenue`
+    ) as `lifetime_revenue`,
+    countIf(`funnel_source` like '%Instant Offer%' and lower(`service_name`) like '%pro%') over(partition by `unified_id`) as `has_pro_instant_offer`,
+    countIf(`funnel_source` like '%Instant Offer%' and lower(`service_name`) like '%book%') over(partition by `unified_id`) as `has_book_instant_offer`
 from (
     select
         `use`.`subscription_id` as `subscription_id`,

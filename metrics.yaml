@@ -30,6 +30,14 @@ trial -> charge, %:
   - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
   - description: "conversion rate from trial to charge"
 
+trial -> any charge, %:
+  - numerator: any_charged_trial_cnt
+  - denominator: access_trial_cnt
+  - percentage: true
+  - distribution: "bernoulli"
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "conversion rate from trial to charge"
+
 active trial -> charge, %:
   - numerator: active_charged_trial_cnt
   - denominator: active_trial_cnt

@@ -41,6 +41,8 @@ and (
 )
 and
     `variation` > 0
+and
+    `urew`.`source` = '{client}'
 group by
     `unified_id`,
     `variation`

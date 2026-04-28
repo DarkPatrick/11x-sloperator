@@ -76,9 +76,9 @@ def handle_exp_message(message, say, logger):
     )
 
     try:
-        table, table_cum, stat_results, summary = calculate_exp_info(exp_id)
+        tables_dit, tables_cum_dict, stat_results_cum_dict, summary = calculate_exp_info(exp_id)
 
-        formatted_table, truncated = slack.format_table_for_slack(table)
+        # formatted_table, truncated = slack.format_table_for_slack(table)
 
         result_text = (
             f"*Experiment #{exp_id}*\n\n"
@@ -87,27 +87,30 @@ def handle_exp_message(message, say, logger):
         )
 
         # send table as csv file
-        slack.upload_csv_file(
-            title=f"Experiment #{exp_id} - Таблица",
-            filename=f"experiment_{exp_id}_table.csv",
-            content=table.to_csv(index=False),
-            thread_ts=progress_ts,
-            channel_id=event["channel"],
-        )
-        slack.upload_csv_file(
-            title=f"Experiment #{exp_id} - Кумулятивная таблица по дням",
-            filename=f"experiment_{exp_id}_table_cum.csv",
-            content=table_cum.to_csv(index=False),
-            thread_ts=progress_ts,
-            channel_id=event["channel"],
-        )
-        slack.upload_csv_file(
-            title=f"Experiment #{exp_id} - Статистика по метрикам",
-            filename=f"experiment_{exp_id}_table_cum.csv",
-            content=stat_results.to_csv(index=False),
-            thread_ts=progress_ts,
-            channel_id=event["channel"],
-        )
+        for client, table in tables_dit.items():
+            table_cum = tables_cum_dict[client]
+            stat_results = stat_results_cum_dict[client]
+            slack.upload_csv_file(
+                title=f"Experiment #{exp_id} - Таблица",
+                filename=f"experiment_{exp_id}_table.csv",
+                content=table.to_csv(index=False),
+                thread_ts=progress_ts,
+                channel_id=event["channel"],
+            )
+            slack.upload_csv_file(
+                title=f"Experiment #{exp_id} - Кумулятивная таблица по дням",
+                filename=f"experiment_{exp_id}_table_cum.csv",
+                content=table_cum.to_csv(index=False),
+                thread_ts=progress_ts,
+                channel_id=event["channel"],
+            )
+            slack.upload_csv_file(
+                title=f"Experiment #{exp_id} - Статистика по метрикам",
+                filename=f"experiment_{exp_id}_table_cum.csv",
+                content=stat_results.to_csv(index=False),
+                thread_ts=progress_ts,
+                channel_id=event["channel"],
+            )
         # Если сообщение слишком длинное, сначала пробуем обновить короткой версией,
         # а полную таблицу можно выгрузить snippet'ом
         if len(result_text) <= 3900:
@@ -120,12 +123,12 @@ def handle_exp_message(message, say, logger):
             )
             slack.update_event_reply(event, progress_ts, short_text)
 
-            channel_id = event["channel"]
-            slack.upload_text_snippet(
-                title=f"exp_{exp_id}_table",
-                content=str(table),
-                channel_id=channel_id,
-            )
+            # channel_id = event["channel"]
+            # slack.upload_text_snippet(
+            #     title=f"exp_{exp_id}_table",
+            #     content=str(table),
+            #     channel_id=channel_id,
+            # )
 
     except Exception as exc:
         logger.exception("Failed to calculate exp info for exp_id=%s", exp_id)

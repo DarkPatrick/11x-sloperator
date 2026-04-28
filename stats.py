@@ -1,3 +1,4 @@
+# TODO: add calculation by source UGT_ANDROI / UGT_IOS / UG_WEB / ...
 import logging
 import pandas as pd
 import numpy as np
@@ -8,7 +9,7 @@ import math
 import yaml
 from typing import List, Optional, Any
 
-from clickhouse_worker import execute_sql, get_experiment, create_experiment_users_table, create_experiments_subscription_table, drop_table, get_monetization_metrics
+from clickhouse_worker import execute_sql, execute_sql_modify, get_experiment, create_experiment_users_table, create_experiments_subscription_table, drop_table, get_monetization_metrics, create_exp_results_table, update_exp_results_table, drop_exp_partitions
 
 
 
@@ -147,13 +148,9 @@ def normalize_metric_config(metric_items: list[dict]) -> dict:
 
 def calc_stats(mean_0, mean_1, var_0, var_1, len_0, len_1, alpha=None, required_power=None, pvalue=None, calc_mean=False):
         if math.isnan(mean_0) or math.isnan(mean_1) or math.isnan(len_0) or math.isnan(len_1):
-            return {"pvalue": 1, 
-                    # "power": 0, 
+            return {"pvalue": 1,  
                 "cohen_d": 0, 
-                # "sample_size": 0, 
-                # "enough": False,
                 "ci": [np.array([0, 0])],
-                # "prob_b_beats_a": 0
                 }
         if alpha is None:
             alpha = 0.05
@@ -178,40 +175,11 @@ def calc_stats(mean_0, mean_1, var_0, var_1, len_0, len_1, alpha=None, required_
                 mean *= -1
 
         cohen_d = mean_abs / sd
-        # bound_value = special.nrdtrimn(alpha / 2, std, 0)
-        # power = 1 - (stats.norm.cdf(x=bound_value, loc=mean_abs, scale=std) - 
-        #             stats.norm.cdf(x=-bound_value, loc=mean_abs, scale=std))
-        # analysis = TTestIndPower()
-        # try:
-        #     sample_size = analysis.solve_power(cohen_d, power=required_power, nobs1=None, alpha=alpha)
-        # except:
-        #     sample_size = math.inf
-
-        # calculate mean and variance of two beta distribution
-        # print("MEAN, LEN", mean_1, len_1)
-        # alpha_a = round(mean_0 * len_0) + 1
-        # alpha_b = round(mean_1 * len_1) + 1
-        # beta_a = len_0 - alpha_a + 2
-        # beta_b = len_1 - alpha_b + 2
-        # mean_beta_a = alpha_a / (alpha_a + beta_a)
-        # mean_beta_b = alpha_b / (alpha_b + beta_b)
-        # var_beta_a = (alpha_a * beta_a) / (np.power(alpha_a + beta_a, 2) * (alpha_a + beta_a + 1))
-        # var_beta_b = (alpha_b * beta_b) / (np.power(alpha_b + beta_b, 2) * (alpha_b + beta_b + 1))
-
-        # using Central limit theorem instead of simulations to get precise results
-        # normal_std = np.sqrt(var_beta_a + var_beta_b)
-        # normal_mean = mean_beta_a - mean_beta_b
-        # probability that b beats a
-        # conv_prob_b_beats_a = stats.norm.cdf(x=0, loc=normal_mean, scale=normal_std)
 
         return {"pvalue": pvalue, 
-                # "power": power, 
                 "cohen_d": cohen_d, 
-                # "sample_size": np.ceil(sample_size), 
-                # "enough": sample_size <= min(len_0, len_1),
                 "ci": [np.array([stats.norm.ppf(alpha / 2, mean, std), 
                     stats.norm.ppf(1 - alpha / 2, mean, std)])],
-                # "prob_b_beats_a": conv_prob_b_beats_a
                 }
 
 
@@ -344,6 +312,7 @@ def calc_metrics_stats_by_variation_pairs(
                     "mean_0": mean_0 * koeff,
                     "mean_1": mean_1 * koeff,
                     "mean_diff": mean_diff * koeff,
+                    "lift": mean_diff / mean_0 * koeff if mean_0 != 0 else 0,
 
                     "ci_low": ci[0][0] * koeff,
                     "ci_high": ci[0][1] * koeff,
@@ -364,29 +333,49 @@ def calc_metrics_stats_by_variation_pairs(
     return result
 
 
-def calculate_exp_info(exp_id) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str]:
+def calculate_exp_info(exp_id) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame], str]:
     exp_info: dict = get_experiment(exp_id)
-    # log start calulation with exp_info for debugging
-    logger.info("Calculating experiment info for exp_id=%s with exp_info:\n%s", exp_id, exp_info)
-    logger.info("loading users...")
-    exp_users_table: str = create_experiment_users_table(exp_info)
-    logger.info("loading subscriptions...")
-    subscription_table: str = create_experiments_subscription_table(exp_info)
-    logger.info("exp_users_table:\n%s, subscription_table: %s", exp_users_table, subscription_table)
-    logger.info("loading exp monetization metrics...")
-    df: pd.DataFrame = get_monetization_metrics(exp_info, exp_users_table, subscription_table)
-    
-    logger.info("deleteing temp tables...")
-    drop_table(exp_users_table)
-    drop_table(subscription_table)
-    logger.info("calculating cumulative aggregates...")
-    df_cum_agg = calc_cumulative_aggregates(df)
-    
-    logger.info("calculating cumulative statistics...")
-    stats_df = calc_metrics_stats_by_variation_pairs(
-        cumulative_df=df_cum_agg,
-        metrics_yaml_path="metrics.yaml",
-        control_variation=1,
-    )
-    return df, df_cum_agg, stats_df, f"exp_users_table={exp_users_table}, subscription_table={subscription_table}"
+    # if exp_id has no field exp_info["clients_list"] or its and empty array or empty string then reassign it with ["UGT_IOS", "UGT_ANDROID", "UG_WEB"]
+    if not exp_info.get("clients_list"):
+        exp_info["clients_list"] = ["UGT_IOS", "UGT_ANDROID", "UG_WEB"]
+    # TODO: цикл в котроом всё считаетм по клиенту
+    df_tot = {}
+    stats_df_tot = {}
+    df_cum_agg_tot = {}
+    for client in exp_info["clients_list"]:
+        logger.info("Calculating experiment info for exp_id=%s, client=%s", exp_id, client)
+        # log start calulation with exp_info for debugging
+        logger.info("Calculating experiment info for exp_id=%s with exp_info:\n%s", exp_id, exp_info)
+        logger.info("loading users...")
+        exp_users_table: str = create_experiment_users_table(exp_info, client)
+        logger.info("loading subscriptions...")
+        subscription_table: str = create_experiments_subscription_table(exp_info)
+        logger.info("exp_users_table:\n%s, subscription_table: %s", exp_users_table, subscription_table)
+        logger.info("loading exp monetization metrics...")
+        df: pd.DataFrame = get_monetization_metrics(exp_info, exp_users_table, subscription_table)
+        df_tot[client] = df
+
+        logger.info("deleteing temp tables...")
+        drop_table(exp_users_table)
+        drop_table(subscription_table)
+        logger.info("calculating cumulative aggregates...")
+        df_cum_agg = calc_cumulative_aggregates(df)
+        df_cum_agg_tot[client] = df_cum_agg
+        logger.info("calculating cumulative statistics...")
+        stats_df = calc_metrics_stats_by_variation_pairs(
+            cumulative_df=df_cum_agg,
+            metrics_yaml_path="metrics.yaml",
+            control_variation=1,
+        )
+        stats_df["exp_id"] = exp_id
+        stats_df["client"] = client
+        stats_df_tot[client] = stats_df
+        is_exists = execute_sql("exists sandbox.ug_monetization_sloperator_ug_exp_results")
+        if int(is_exists.iloc[0].values[0]) == 0:
+            create_exp_results_table(stats_df)
+        else:
+            # execute_sql_modify(f"delete from sandbox.ug_monetization_sloperator_ug_exp_results where exp_id = {exp_id}")
+            drop_exp_partitions(exp_id)
+            update_exp_results_table(stats_df)
+    return df_tot, df_cum_agg_tot, stats_df_tot, f"exp_users_table={exp_users_table}, subscription_table={subscription_table}"
 
