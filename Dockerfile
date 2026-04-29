@@ -16,6 +16,7 @@ COPY vpn_supervisor.py /app/vpn_supervisor.py
 COPY clickhouse_supervisor.py /app/clickhouse_supervisor.py
 COPY slack_worker.py /app/slack_worker.py
 COPY stats.py /app/stats.py
+COPY chatgpt_agent_worker.py /app/chatgpt_agent_worker.py
 COPY docker /app/docker
 COPY queries /app/queries
 COPY metrics.yaml /app/metrics.yaml

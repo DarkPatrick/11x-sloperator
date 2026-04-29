@@ -2,6 +2,7 @@ import os
 import logging
 from typing import Optional, Any
 from io import StringIO
+import time
 import pandas as pd
 
 from slack_sdk import WebClient
@@ -357,3 +358,103 @@ class SlackWorker:
         except SlackApiError as exc:
             logger.exception("Failed to upload CSV file %s", filename)
             raise SlackWorkerError(f"Failed to upload CSV file: {exc}") from exc
+
+    def get_conversation_history(
+        self,
+        *,
+        channel_id: str,
+        oldest: Optional[float] = None,
+        latest: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """
+        Fetch messages from a Slack conversation.
+        Works for DM / channel / private channel if token has required scopes.
+        """
+        messages: list[dict[str, Any]] = []
+        cursor: Optional[str] = None
+
+        while True:
+            resp = self.client.conversations_history(
+                channel=channel_id,
+                oldest=str(oldest) if oldest else None,
+                latest=latest,
+                inclusive=True,
+                limit=min(limit, 200),
+                cursor=cursor,
+            )
+
+            messages.extend(resp.get("messages", []))
+
+            metadata = resp.get("response_metadata") or {}
+            cursor = metadata.get("next_cursor")
+
+            if not cursor or len(messages) >= limit:
+                break
+
+        return messages[:limit]
+
+    def get_thread_replies(
+        self,
+        *,
+        channel_id: str,
+        thread_ts: str,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """
+        Fetch full Slack thread.
+        """
+        replies: list[dict[str, Any]] = []
+        cursor: Optional[str] = None
+
+        while True:
+            resp = self.client.conversations_replies(
+                channel=channel_id,
+                ts=thread_ts,
+                limit=min(limit, 200),
+                cursor=cursor,
+            )
+
+            replies.extend(resp.get("messages", []))
+
+            metadata = resp.get("response_metadata") or {}
+            cursor = metadata.get("next_cursor")
+
+            if not cursor or len(replies) >= limit:
+                break
+
+        return replies[:limit]
+
+    def get_user_label(self, user_id: Optional[str]) -> str:
+        """
+        Convert Slack user id to readable label.
+        Falls back to user id.
+        """
+        if not user_id:
+            return "unknown_user"
+
+        try:
+            resp = self.client.users_info(user=user_id)
+            user = resp.get("user") or {}
+            profile = user.get("profile") or {}
+
+            return (
+                profile.get("display_name")
+                or profile.get("real_name")
+                or user.get("name")
+                or user_id
+            )
+        except Exception:
+            return user_id
+
+    def get_bot_identity(self) -> dict[str, str]:
+        """
+        Return current bot/app identity.
+        """
+        resp = self.client.auth_test()
+        return {
+            "bot_user_id": resp.get("user_id", ""),
+            "bot_name": resp.get("user", ""),
+            "team": resp.get("team", ""),
+            "team_id": resp.get("team_id", ""),
+        }

@@ -8,6 +8,7 @@ import requests
 from json import dumps
 import textwrap
 import numbers
+import ast
 import pandas as pd
 import numpy as np
 import datetime
@@ -85,7 +86,7 @@ def _sanitize_sql(sql: str) -> str:
     return textwrap.dedent(sql).strip()
 
 
-def drop_exp_partitions(exp_id: int, cluster: str = "ug_core"):
+def drop_exp_partitions(exp_id: int, client_name: str, segment: str, cluster: str = "ug_core"):
     database = "sandbox"
     table = "ug_monetization_sloperator_ug_exp_results"
 
@@ -96,7 +97,7 @@ def drop_exp_partitions(exp_id: int, cluster: str = "ug_core"):
     WHERE database = '{database}'
       AND table = '{table}'
       AND active
-      AND partition LIKE '%,{exp_id})'
+      AND partition LIKE '%, {exp_id}, {client_name}, {segment})'
     ORDER BY partition
     """
 
@@ -105,7 +106,7 @@ def drop_exp_partitions(exp_id: int, cluster: str = "ug_core"):
         partitions = client.query(partitions_sql).result_rows
 
         if not partitions:
-            print(f"No active partitions found for exp_id={exp_id}")
+            print(f"No active partitions found for exp_id={exp_id} and client={client_name}, and segment={segment}, skipping drop")
             return
 
         for (partition,) in partitions:
@@ -119,10 +120,10 @@ def drop_exp_partitions(exp_id: int, cluster: str = "ug_core"):
             drop_sql = f"""
             ALTER TABLE {database}.{table}
             ON CLUSTER {cluster}
-            DROP PARTITION ({year_month}, {partition_exp_id})
+            DROP PARTITION ({year_month}, {partition_exp_id}, {client_name}, {segment})
             """
 
-            print(f"Drop partition: ({year_month}, {partition_exp_id})")
+            print(f"Drop partition: ({year_month}, {partition_exp_id}, {client_name}, {segment})")
             
             client.command(drop_sql)
     except ClickHouseError as e:
@@ -261,6 +262,71 @@ def insert_df_by_chunks(table_name: str, df: pd.DataFrame, chunk_size=1000):
         insert_dataframe(table_name, chunk)
 
 
+def parse_configuration_project(row) -> str:
+    text = str(row)
+
+    # --- 1. PROJECT ---
+    project = ''
+
+    # ищем после project:
+    match_project = re.search(r'project:\s*"?([^",\s]+)"?', text)
+    if match_project:
+        project = match_project.group(1)
+    else:
+        # fallback — ищем любую ссылку
+        match_url = re.search(r'https?://[^\s,"]+', text)
+        if match_url:
+            project = match_url.group(0)
+
+    # убираем якорь (#...)
+    if project:
+        project = project.split('#')[0]
+
+    return project
+
+
+def parse_configuration_segments(row) -> dict:
+    DEFAULT_SEGMENTS = {'Total': {'pro_rights': 'All'}}
+    text = str(row)
+    if not text or 'segments:' not in text:
+        return DEFAULT_SEGMENTS
+
+    start_match = re.search(r'segments:\s*', text)
+    if not start_match:
+        return DEFAULT_SEGMENTS
+
+    start = start_match.end()
+
+    # ищем первую открывающую скобку словаря
+    first_brace = text.find('{', start)
+    if first_brace == -1:
+        return DEFAULT_SEGMENTS
+
+    depth = 0
+
+    for i in range(first_brace, len(text)):
+        if text[i] == '{':
+            depth += 1
+        elif text[i] == '}':
+            depth -= 1
+
+            if depth == 0:
+                dict_str = text[first_brace:i + 1]
+
+                try:
+                    return ast.literal_eval(dict_str)
+                except Exception:
+                    return DEFAULT_SEGMENTS
+
+    return DEFAULT_SEGMENTS
+
+
+def get_ugm_exps_list() -> list[int]:
+    query = get_query("get_ug_monetization_exps_ids_to_calc")
+    df = execute_sql(query)
+    return df['id'].tolist()
+
+
 def get_experiment(id) -> dict:
         query = get_query("get_ug_exp_info", params=dict({"id": id}))
         query_result = execute_sql(query)
@@ -277,6 +343,11 @@ def get_experiment(id) -> dict:
             'clients_list': df.clients_list[0],
             'clients_options': df.clients_options[0]
         }
+        project = parse_configuration_project(exp_info["configuration"])
+        segments = parse_configuration_segments(exp_info["configuration"])
+        exp_info["project"] = project
+        exp_info["segments"] = segments
+        
         logger.info("exp_info: %s", exp_info)
         return exp_info
 
@@ -404,7 +475,7 @@ def pandas_to_clickhouse_types(df) -> str:
 
 def create_exp_results_table(df: pd.DataFrame) -> None:
     schema = pandas_to_clickhouse_types(df)
-    query = get_query("create_table_template", params=dict({"table_name": "ug_exp_results", "schema": f"({schema})", "partition": "toYYYYMM(toDate(dt)), exp_id", "sorting": "dt"}))
+    query = get_query("create_table_template", params=dict({"table_name": "ug_exp_results", "schema": f"({schema})", "partition": "toYYYYMM(toDate(dt)), exp_id, client, segment", "sorting": "dt"}))
     logger.info("Creating experiment results table with query:\n%s", query)
     execute_sql_modify(query)
     # insert_dataframe("ug_monetization_sloperator_ug_exp_results", df)
