@@ -1,6 +1,8 @@
 with
-    toDate({date_start}) as date_start,
-    toDate({date_end}) as date_end
+    toDate('{date_start}') as date_start,
+    toDate('{date_end}') as date_end,
+    {where_sql} as `where_condition`,
+    {having_sql} as `having_condition`
 
 select
     *,
@@ -84,6 +86,8 @@ from (
         `use`.`date` >= date_start - interval 15 day
     and
         `use`.`event` in ('Subscribed', 'Charged', 'Canceled', 'Refunded', 'Crossgrade', 'Upgrade', 'Downgrade')
+    and
+        (`where_condition`)
     group by
         `subscription_id`,
         `product_code`
@@ -91,4 +95,6 @@ from (
         toDate(`subscribed_dt`) between date_start - interval 15 day and date_end
     and
         lower(`funnel_source`) not like '%email%'
+    and
+        (`having_condition`)
 )

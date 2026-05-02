@@ -4,7 +4,7 @@ with
     {where_sql} as `where_condition`,
     {having_sql} as `having_condition`,
     (
-        select
+        select distinct
             toUInt32(`aee`.`id`) as `id`,
             `aee`.`date_start` as `date_start`,
             `aee`.`date_end` as `date_end`
@@ -14,6 +14,7 @@ with
             `aee`.`product` = 'UG'
         and
             `aee`.`id` = `exp_id`
+        limit 1
     ) as exp_data
     
 
@@ -41,10 +42,8 @@ and
     `urea`.`unified_id` > 0
 and
     `eut`.`unified_id` = 0
-and (
+and
     (where_condition)
-    or `urea`.`event` = 'App Install'
-)
 and
     `variation` > 0
 and

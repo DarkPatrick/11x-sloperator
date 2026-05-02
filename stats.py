@@ -9,7 +9,7 @@ import math
 import yaml
 from typing import List, Optional, Any
 
-from clickhouse_worker import execute_sql, execute_sql_modify, get_experiment, create_experiment_users_table, create_experiments_subscription_table, drop_table, get_monetization_metrics, create_exp_results_table, update_exp_results_table, drop_exp_partitions
+from clickhouse_worker import execute_sql, execute_sql_modify, get_experiment, create_experiment_users_table, create_experiments_subscription_table, drop_table, get_monetization_metrics, create_exp_results_table, update_exp_results_table, drop_exp_partitions, create_exp_stats_table
 
 
 
@@ -343,41 +343,51 @@ def calculate_exp_info(exp_id) -> tuple[dict[str, pd.DataFrame], dict[str, pd.Da
     stats_df_tot = {}
     df_cum_agg_tot = {}
     for client in exp_info["clients_list"]:
-        for segment in exp_info["segments"]:
+        for segment_name, segment in exp_info["segments"].items():
             logger.info("Calculating experiment info for exp_id=%s, client=%s", exp_id, client)
             # log start calulation with exp_info for debugging
             logger.info("Calculating experiment info for exp_id=%s with exp_info:\n%s", exp_id, exp_info)
             logger.info("loading users...")
-            exp_users_table: str = create_experiment_users_table(exp_info, client)
+            exp_users_table: str = create_experiment_users_table(exp_info, client, segment)
             logger.info("loading subscriptions...")
-            subscription_table: str = create_experiments_subscription_table(exp_info)
+            subscription_table: str = create_experiments_subscription_table(exp_info, client, segment)
             logger.info("exp_users_table:\n%s, subscription_table: %s", exp_users_table, subscription_table)
             logger.info("loading exp monetization metrics...")
             df: pd.DataFrame = get_monetization_metrics(exp_info, exp_users_table, subscription_table)
-            df_tot[(client, segment)] = df
+            df_tot[(client, segment_name)] = df
 
             logger.info("deleteing temp tables...")
             drop_table(exp_users_table)
             drop_table(subscription_table)
             logger.info("calculating cumulative aggregates...")
             df_cum_agg = calc_cumulative_aggregates(df)
-            df_cum_agg_tot[(client, segment)] = df_cum_agg
             logger.info("calculating cumulative statistics...")
             stats_df = calc_metrics_stats_by_variation_pairs(
                 cumulative_df=df_cum_agg,
                 metrics_yaml_path="metrics.yaml",
                 control_variation=1,
             )
+            df_cum_agg = df_cum_agg.melt(id_vars=["dt", "variation"], var_name="metric", value_name="value")
+            df_cum_agg["exp_id"] = exp_id
+            df_cum_agg["client"] = client
+            df_cum_agg["segment"] = segment_name
+            df_cum_agg_tot[(client, segment_name)] = df_cum_agg
             stats_df["exp_id"] = exp_id
             stats_df["client"] = client
-            stats_df["segment"] = segment
-            stats_df_tot[(client, segment)] = stats_df
+            stats_df["segment"] = segment_name
+            stats_df_tot[(client, segment_name)] = stats_df
             is_exists = execute_sql("exists sandbox.ug_monetization_sloperator_ug_exp_results")
             if int(is_exists.iloc[0].values[0]) == 0:
                 create_exp_results_table(stats_df)
             else:
-                # execute_sql_modify(f"delete from sandbox.ug_monetization_sloperator_ug_exp_results where exp_id = {exp_id}")
-                drop_exp_partitions(exp_id, client_name=client, segment=segment)
-                update_exp_results_table(stats_df)
+                drop_exp_partitions(exp_id, client_name=client, segment=segment_name, table_name="ug_exp_results")
+                update_exp_results_table(stats_df, table="ug_exp_results")
+
+            is_exists = execute_sql("exists sandbox.ug_monetization_sloperator_ug_exp_stats")
+            if int(is_exists.iloc[0].values[0]) == 0:
+                create_exp_stats_table(df_cum_agg)
+            else:
+                drop_exp_partitions(exp_id, client_name=client, segment=segment_name, table_name="ug_exp_stats")
+                update_exp_results_table(df_cum_agg, table="ug_exp_stats")
     return df_tot, df_cum_agg_tot, stats_df_tot, f"exp_users_table={exp_users_table}, subscription_table={subscription_table}"
 

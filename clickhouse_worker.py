@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 import os
 import re
 import string
@@ -86,9 +87,9 @@ def _sanitize_sql(sql: str) -> str:
     return textwrap.dedent(sql).strip()
 
 
-def drop_exp_partitions(exp_id: int, client_name: str, segment: str, cluster: str = "ug_core"):
+def drop_exp_partitions(exp_id: int, client_name: str, segment: str, table_name: str = "ug_exp_results", cluster: str = "ug_core") -> None:
     database = "sandbox"
-    table = "ug_monetization_sloperator_ug_exp_results"
+    table = f"ug_monetization_sloperator_{table_name}"
 
     partitions_sql = f"""
     SELECT DISTINCT
@@ -97,7 +98,7 @@ def drop_exp_partitions(exp_id: int, client_name: str, segment: str, cluster: st
     WHERE database = '{database}'
       AND table = '{table}'
       AND active
-      AND partition LIKE '%, {exp_id}, {client_name}, {segment})'
+      AND partition LIKE '%,{exp_id},''{client_name}'',''{segment}'')'
     ORDER BY partition
     """
 
@@ -111,7 +112,7 @@ def drop_exp_partitions(exp_id: int, client_name: str, segment: str, cluster: st
 
         for (partition,) in partitions:
             # partition: '(202603,7178)'
-            year_month, partition_exp_id = (
+            year_month, partition_exp_id, partition_client_name, partition_segment = (
                 partition
                 .strip("()")
                 .split(",")
@@ -120,10 +121,10 @@ def drop_exp_partitions(exp_id: int, client_name: str, segment: str, cluster: st
             drop_sql = f"""
             ALTER TABLE {database}.{table}
             ON CLUSTER {cluster}
-            DROP PARTITION ({year_month}, {partition_exp_id}, {client_name}, {segment})
+            DROP PARTITION ({year_month}, {partition_exp_id}, {partition_client_name}, {partition_segment})
             """
 
-            print(f"Drop partition: ({year_month}, {partition_exp_id}, {client_name}, {segment})")
+            print(f"Drop partition: ({year_month}, {partition_exp_id}, {partition_client_name}, {partition_segment})")
             
             client.command(drop_sql)
     except ClickHouseError as e:
@@ -208,6 +209,36 @@ def prepare_df_for_clickhouse(df):
         'control_variation',
         'test_variation',
         'exp_id',
+        'variation',
+        'members',
+        'install_cnt',
+        'subscriber_cnt',
+        'otp_owner_cnt',
+        'access_owner_cnt',
+        'access_instant_cnt',
+        'access_ex_trial_cnt',
+        'access_trial_cnt',
+        'trial_subscriber_cnt',
+        'active_trial_cnt',
+        'access_otp_cnt',
+        'subscriptions_cnt',
+        'access_cnt',
+        'charged_trial_cnt',
+        'any_charged_trial_cnt',
+        'active_charged_trial_cnt',
+        'cancel_trial_cnt',
+        'trial_buyer_cnt',
+        'late_charged_cnt',
+        'subscribe_buyer_cnt',
+        'buyer_cnt',
+        'subscription_charge_cnt',
+        'charge_cnt',
+        'refund_14d_cnt',
+        'recurrent_charge_cnt',
+        'upgrade_cnt',
+        'upgrade_revenue',
+        'cancel_14d_cnt',
+        'cancel_1m_cnt',
     ]
 
     float_columns = [
@@ -218,16 +249,28 @@ def prepare_df_for_clickhouse(df):
         'ci_high',
         'pvalue',
         'lift',
+        'revenue',
+        'refund_revenue',
+        'recurrent_revenue',
+        'trial_revenue',
+        'active_trial_revenue',
+        'lifetime_revenue',
+        'arpu_var',
+        'lifetime_arpu_var',
+        'arppu_var',
     ]
 
     for col in string_columns:
-        df[col] = df[col].replace({np.nan: ''}).fillna('').astype(str)
+        if col in df.columns:
+            df[col] = df[col].replace({np.nan: ''}).fillna('').astype(str)
 
     for col in int_columns:
-        df[col] = df[col].replace({np.nan: 0}).fillna(0).astype('int64')
+        if col in df.columns:
+            df[col] = df[col].replace({np.nan: 0}).fillna(0).astype('int64')
 
     for col in float_columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
 
     return df
 
@@ -236,8 +279,9 @@ def insert_dataframe(table_name: str, df: pd.DataFrame) -> None:
     client = _get_client()
     try:
         for col in ['dt', 'metric', 'variation_pair', 'numerator', 'denominator', 'variance', 'distribution', 'percentage', 'client']:
-            bad = df[df[col].map(lambda x: not isinstance(x, str) and pd.notna(x))]
-            print(col, len(bad), bad[col].head().tolist())
+            if col in df.columns:
+                bad = df[df[col].map(lambda x: not isinstance(x, str) and pd.notna(x))]
+                print(col, len(bad), bad[col].head().tolist())
         client.insert_df(table_name, df)
     except ClickHouseError as e:
         raise ClickHouseQueryError(str(e)) from e
@@ -352,7 +396,26 @@ def get_experiment(id) -> dict:
         return exp_info
 
 
-def create_experiment_users_table(exp_info: dict, client: str) -> str:
+def generate_sql_rights_filter(rights_type: str, rights: str):
+        rights_level_list = ['pro', 'edu', 'sing', 'practice', 'book']
+        rights_level = int(math.pow(10, rights_level_list.index(rights_type)))
+        rights_dict: dict = {
+            'empty': f'toUInt32(rights / {rights_level}) % 10 = 0',
+            'free': f'toUInt32(rights / {rights_level}) % 10 in (0, 4, 5)',
+            'finite subscription': f'toUInt32(rights / {rights_level}) % 10 in (1, 2)',
+            'lifetime': f'toUInt32(rights / {rights_level}) % 10 in (3)',
+            'any paid': f'toUInt32(rights / {rights_level}) % 10 in (2, 3)',
+            'any subscription': f'toUInt32(rights / {rights_level}) % 10 in (1, 2, 3)',
+            'trial': f'toUInt32(rights / {rights_level}) % 10 in (1)',
+            'expired subscription': f'toUInt32(rights / {rights_level}) % 10 in (5)',
+            'expired trial': f'toUInt32(rights / {rights_level}) % 10 in (4)',
+            'expired any': f'toUInt32(rights / {rights_level}) % 10 in (4, 5)',
+            'all': f'1'
+        }
+        return rights_dict[rights]
+
+
+def create_experiment_users_table(exp_info: dict, client: str, segment: dict) -> str:
     session_id = generate_random_id(32)
     exp_id = exp_info["id"]
     exp_start_dt = datetime.datetime.fromtimestamp(exp_info["date_start"], datetime.timezone.utc)
@@ -367,18 +430,26 @@ def create_experiment_users_table(exp_info: dict, client: str) -> str:
             "sorting": "exp_start_dt"
         })
     )
-    where_filter: str = "1"
+    # where_filter: str = "1"
+    where_filter: str = segment.get("uwf", "1")
     if exp_info["experiment_event_start"] == "App Experiment Start":
-        where_filter = f"event = 'App Experiment Start' and item_id = {exp_id}"
+        where_filter += f" and (event = 'App Experiment Start' and item_id = {exp_id})"
     elif exp_info["experiment_event_start"] != "":
-        where_filter = f"event = '{exp_info['experiment_event_start']}'"
+        where_filter += f" and event = '{exp_info['experiment_event_start']}'"
+    having_filter = segment.get("uhf", "1")
+    pro_rights = generate_sql_rights_filter("pro", segment.get("pro_rights", "all").lower())
+    edu_rights = generate_sql_rights_filter("edu", segment.get("edu_rights", "all").lower())
+    sing_rights = generate_sql_rights_filter("edu", segment.get("sing_rights", "all").lower())
+    practice_rights = generate_sql_rights_filter("edu", segment.get("practice_rights", "all").lower())
+    book_rights = generate_sql_rights_filter("edu", segment.get("book_rights", "all").lower())
+    having_filter += f" and ({pro_rights} and {edu_rights} and {sing_rights} and {practice_rights} and {book_rights})"
     if "UG_WEB" in exp_info["clients_list"]:
         query_part_2 = get_query(
             "exp_raw_data_web", 
             params={
                 "exp_id": exp_id, 
                 "where_sql": where_filter, 
-                "having_sql": 1,
+                "having_sql": having_filter,
                 "date_filter": exp_start_dt.strftime("%Y-%m-%d"),
                 "client": client
             }
@@ -389,7 +460,7 @@ def create_experiment_users_table(exp_info: dict, client: str) -> str:
             params={
                 "exp_id": exp_id, 
                 "where_sql": where_filter, 
-                "having_sql": 1,
+                "having_sql": having_filter,
                 "date_filter": exp_start_dt.strftime("%Y-%m-%d"),
                 "client": client
             }
@@ -413,7 +484,7 @@ def create_experiment_users_table(exp_info: dict, client: str) -> str:
                 params={
                     "exp_id": exp_id, 
                     "where_sql": where_filter, 
-                    "having_sql": 1,
+                    "having_sql": having_filter,
                     "date_filter": current_day.strftime("%Y-%m-%d"),
                     "exp_users_table": f"sandbox.ug_monetization_sloperator_{table_name}",
                     "client": client
@@ -425,7 +496,7 @@ def create_experiment_users_table(exp_info: dict, client: str) -> str:
                 params={
                     "exp_id": exp_id, 
                     "where_sql": where_filter, 
-                    "having_sql": 1,
+                    "having_sql": having_filter,
                     "date_filter": current_day.strftime("%Y-%m-%d"),
                     "exp_users_table": f"sandbox.ug_monetization_sloperator_{table_name}",
                     "client": client
@@ -437,18 +508,45 @@ def create_experiment_users_table(exp_info: dict, client: str) -> str:
 
     return f"sandbox.ug_monetization_sloperator_{table_name}"
 
-def create_experiments_subscription_table(exp_info: dict) -> str:
+def create_experiments_subscription_table(exp_info: dict, client: str, segment: dict) -> str:
     session_id = generate_random_id(32)
     table_name = f'exp_subscription_{exp_info["id"]}_{session_id}'
-    query_part_1 = get_query("create_table_template", params=dict({"table_name": table_name, "schema": "", "partition": "toYYYYMM(toDate(subscribed_dt))", "sorting": "subscribed_dt"}))
-    query_part_2 = get_query("subscriptions_by_sub_date", params={"date_start": exp_info["date_start"], "date_end": exp_info["date_end"]})
+    query_part_1 = get_query(
+        "create_table_template", 
+        params=dict({
+            "table_name": table_name,
+            "schema": "", 
+            "partition": "toYYYYMM(toDate(subscribed_dt))", 
+            "sorting": "subscribed_dt"
+        })
+    )
+    where_filter: str = segment.get("swf", "1")
+    having_filter: str = segment.get("shf", "1")
+    exp_start_dt = datetime.datetime.fromtimestamp(exp_info["date_start"], datetime.timezone.utc)
+    exp_end_dt = datetime.datetime.now(datetime.timezone.utc)
+    if exp_info["date_end"] > exp_info["date_start"]:
+        exp_end_dt = datetime.datetime.fromtimestamp(exp_info["date_end"], datetime.timezone.utc)
+    query_part_2 = get_query(
+        "subscriptions_by_sub_date",
+        params={
+            "date_start": exp_start_dt.strftime("%Y-%m-%d"),
+            "date_end": exp_end_dt.strftime("%Y-%m-%d"),
+            "where_sql": where_filter, 
+            "having_sql": having_filter,
+        }
+    )
     query = query_part_1 + "\n as \n" + query_part_2
     execute_sql_modify(query)
 
     return f"sandbox.ug_monetization_sloperator_{table_name}"
 
 def drop_table(table_name: str) -> None:
-    query = f"drop table if exists {table_name} on cluster ug_core"
+    query = f"""
+        drop table if exists {table_name} on cluster ug_core
+        settings
+        distributed_ddl_task_timeout = 0,
+        distributed_ddl_output_mode = 'none'
+    """
     execute_sql_modify(query)
     return None
 
@@ -480,8 +578,15 @@ def create_exp_results_table(df: pd.DataFrame) -> None:
     execute_sql_modify(query)
     # insert_dataframe("ug_monetization_sloperator_ug_exp_results", df)
     insert_df_by_chunks("sandbox.ug_monetization_sloperator_ug_exp_results", df)
+    
+def create_exp_stats_table(df: pd.DataFrame) -> None:
+    schema = pandas_to_clickhouse_types(df)
+    query = get_query("create_table_template", params=dict({"table_name": "ug_exp_stats", "schema": f"({schema})", "partition": "toYYYYMM(toDate(dt)), exp_id, client, segment", "sorting": "dt"}))
+    logger.info("Creating experiment stats table with query:\n%s", query)
+    execute_sql_modify(query)
+    insert_df_by_chunks("sandbox.ug_monetization_sloperator_ug_exp_stats", df)
 
 
-def update_exp_results_table(df: pd.DataFrame) -> None:
+def update_exp_results_table(df: pd.DataFrame, table: str) -> None:
     # insert_dataframe(df, "ug_monetization_sloperator_ug_exp_results")
-    insert_df_by_chunks("sandbox.ug_monetization_sloperator_ug_exp_results", df)
+    insert_df_by_chunks(f"sandbox.ug_monetization_sloperator_{table}", df)

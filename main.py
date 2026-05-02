@@ -3,8 +3,8 @@
 # docker compose logs -f
 # на mac
 # docker compose down
-# docker compose down
 # docker compose build --no-cache
+# docker compose up
 
 import os
 import logging
@@ -25,6 +25,12 @@ from stats import calculate_exp_info
 
 
 EXP_RE = re.compile(r"^\s*exp\s*#\s*(\d+)\s*$", re.IGNORECASE)
+VPN_RECONNECT_REQUEST_PATH = os.environ.get(
+    "VPN_RECONNECT_REQUEST_PATH",
+    "/tmp/vpn_reconnect_requested",
+)
+
+VPN_RECONNECT_RE = re.compile(r"^\s*vpn\s+reconnect\s*$", re.IGNORECASE)
 
 
 logger = logging.getLogger(__name__)
@@ -37,6 +43,25 @@ slack = SlackWorker()
 agent = ChatGPTAgentWorker(slack=slack)
 
 executor = ThreadPoolExecutor(max_workers=2)
+
+
+def request_vpn_reconnect() -> None:
+    with open(VPN_RECONNECT_REQUEST_PATH, "w", encoding="utf-8") as f:
+        f.write("1")
+
+
+@app.message(VPN_RECONNECT_RE)
+def handle_vpn_reconnect_message(message, logger):
+    text = message.get("text", "")
+    user = message.get("user")
+    logger.info("Incoming message from %s: %s", user, text)
+    event = message
+
+    request_vpn_reconnect()
+    slack.send_event_reply(
+        event,
+        "Ок, запускаю новую попытку VPN-подключения."
+    )
 
 
 @app.message("ugm_exps")

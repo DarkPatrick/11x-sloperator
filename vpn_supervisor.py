@@ -16,6 +16,10 @@ from slack_worker import SlackWorker
 
 
 VPN_STATE_PATH = os.environ.get("VPN_STATE_PATH", "/tmp/vpn_state.json")
+VPN_RECONNECT_REQUEST_PATH = os.environ.get(
+    "VPN_RECONNECT_REQUEST_PATH",
+    "/tmp/vpn_reconnect_requested",
+)
 
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 SLACK_NOTIFY_USER_ID = os.environ["SLACK_NOTIFY_USER_ID"]
@@ -32,6 +36,32 @@ URL_RE = re.compile(r'https://[^\s")]+')
 client = WebClient(token=SLACK_BOT_TOKEN)
 slack = SlackWorker()
 
+
+
+def clear_reconnect_request() -> None:
+    try:
+        os.remove(VPN_RECONNECT_REQUEST_PATH)
+    except FileNotFoundError:
+        pass
+
+
+def wait_for_reconnect_approval(cycle_id: int, ever_connected: bool) -> None:
+    write_vpn_state(
+        connected=False,
+        ever_connected=ever_connected,
+        cycle_id=cycle_id,
+        status="waiting_manual_reconnect",
+    )
+
+    print("[supervisor] waiting for manual reconnect approval", flush=True)
+
+    while True:
+        if os.path.exists(VPN_RECONNECT_REQUEST_PATH):
+            clear_reconnect_request()
+            print("[supervisor] reconnect approved", flush=True)
+            return
+
+        time.sleep(5)
 
 
 def write_vpn_state(
@@ -129,6 +159,7 @@ def supervise() -> None:
     cycle_id = 0
     ever_connected = False
     while True:
+        clear_reconnect_request()
         sent_urls: set[str] = set()
         vpn_up = False
         cycle_id += 1
@@ -232,9 +263,19 @@ def supervise() -> None:
                     pass
 
             # thread_ts = send_dm(f"VPN отключён или перезапускается.\nПричина: {e}", thread_ts=thread_ts)
-            slack.reply_in_thread(f"VPN отключён или перезапускается.\nПричина: {e}", thread_ts=thread_ts)
+            # slack.reply_in_thread(f"VPN отключён или перезапускается.\nПричина: {e}", thread_ts=thread_ts)
+            # thread_ts = None
+            # time.sleep(RESTART_DELAY)
+            slack.reply_in_thread(
+                "VPN отключён.\n"
+                f"Причина: {e}\n\n"
+                "Когда будешь готов пройти авторизацию, напиши боту: `vpn reconnect`",
+                thread_ts=thread_ts,
+            )
+
+            wait_for_reconnect_approval(cycle_id=cycle_id, ever_connected=ever_connected)
+
             thread_ts = None
-            time.sleep(RESTART_DELAY)
             continue
 
 if __name__ == "__main__":

@@ -70,6 +70,14 @@ refund 14d, %:
   - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
   - description: "share of charges who got refund within 14 days since payment date"
 
+pending 14d charges share, %:
+  - numerator: pending_14d_charge_cnt
+  - denominator: charge_cnt
+  - percentage: true
+  - distribution: "bernoulli"
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "share of pending trials due payment date"
+
 arppu, $:
   - numerator: revenue
   - denominator: buyer_cnt
