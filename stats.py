@@ -338,7 +338,8 @@ def calculate_exp_info(exp_id) -> tuple[dict[str, pd.DataFrame], dict[str, pd.Da
     # if exp_id has no field exp_info["clients_list"] or its and empty array or empty string then reassign it with ["UGT_IOS", "UGT_ANDROID", "UG_WEB"]
     if not exp_info.get("clients_list"):
         exp_info["clients_list"] = ["UGT_IOS", "UGT_ANDROID", "UG_WEB"]
-    # TODO: цикл в котроом всё считаетм по клиенту
+    if exp_info.get("experiment_event_start") in [None, "", "xxx"]:
+        raise ValueError(f"Experiment {exp_id} has invalid experiment_event_start: {exp_info.get('experiment_event_start')}")
     df_tot = {}
     stats_df_tot = {}
     df_cum_agg_tot = {}

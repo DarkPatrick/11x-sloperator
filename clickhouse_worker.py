@@ -366,7 +366,19 @@ def parse_configuration_segments(row) -> dict:
 
 
 def get_ugm_exps_list() -> list[int]:
-    query = get_query("get_ug_monetization_exps_ids_to_calc")
+    query = get_query("get_ug_exps_ids_to_calc", params={"domain": "UG Monetization"})
+    df = execute_sql(query)
+    return df['id'].tolist()
+
+
+def get_ugp_exps_list() -> list[int]:
+    query = get_query("get_ug_exps_ids_to_calc", params={"domain": "UG Product"})
+    df = execute_sql(query)
+    return df['id'].tolist()
+
+
+def get_ugg_exps_list() -> list[int]:
+    query = get_query("get_ug_exps_ids_to_calc", params={"domain": "UG Growth"})
     df = execute_sql(query)
     return df['id'].tolist()
 
@@ -578,7 +590,7 @@ def create_exp_results_table(df: pd.DataFrame) -> None:
     execute_sql_modify(query)
     # insert_dataframe("ug_monetization_sloperator_ug_exp_results", df)
     insert_df_by_chunks("sandbox.ug_monetization_sloperator_ug_exp_results", df)
-    
+
 def create_exp_stats_table(df: pd.DataFrame) -> None:
     schema = pandas_to_clickhouse_types(df)
     query = get_query("create_table_template", params=dict({"table_name": "ug_exp_stats", "schema": f"({schema})", "partition": "toYYYYMM(toDate(dt)), exp_id, client, segment", "sorting": "dt"}))
@@ -590,3 +602,11 @@ def create_exp_stats_table(df: pd.DataFrame) -> None:
 def update_exp_results_table(df: pd.DataFrame, table: str) -> None:
     # insert_dataframe(df, "ug_monetization_sloperator_ug_exp_results")
     insert_df_by_chunks(f"sandbox.ug_monetization_sloperator_{table}", df)
+
+
+def clear_exp_temp_tables() -> None:
+    query = get_query("get_sloperator_temp_tables")
+    df = execute_sql(query)
+    tables = df['table_name'].tolist()
+    for table in tables:
+        drop_table(f"sandbox.{table}")

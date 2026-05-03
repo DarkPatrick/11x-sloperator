@@ -19,8 +19,9 @@ from concurrent.futures import ThreadPoolExecutor
 from chatgpt_agent_worker import ChatGPTAgentWorker
 
 from slack_worker import SlackWorker, SlackWorkerError
-from clickhouse_worker import get_ugm_exps_list
+from clickhouse_worker import get_ugm_exps_list, get_ugp_exps_list, get_ugg_exps_list, clear_exp_temp_tables
 from stats import calculate_exp_info
+from conversation_store import ConversationStore
 
 
 
@@ -44,6 +45,9 @@ agent = ChatGPTAgentWorker(slack=slack)
 
 executor = ThreadPoolExecutor(max_workers=2)
 
+store = ConversationStore()
+
+
 
 def request_vpn_reconnect() -> None:
     with open(VPN_RECONNECT_REQUEST_PATH, "w", encoding="utf-8") as f:
@@ -63,37 +67,104 @@ def handle_vpn_reconnect_message(message, logger):
         "Ок, запускаю новую попытку VPN-подключения."
     )
 
-
-@app.message("ugm_exps")
-def handle_all_ugm_exp_message(message, logger):
+@app.message("clear_exp_temp_tables")
+def handle_clear_exp_temp_tables_message(message, logger):
     text = message.get("text", "")
     user = message.get("user")
     logger.info("Incoming message from %s: %s", user, text)
     event = message
 
-    progress_ts = slack.send_event_reply(
+    clear_exp_temp_tables()
+    slack.send_event_reply(
         event,
-        f"Считаю все монетизационные эксперименты: активные и закрытые в последний месяц. это может занять некоторое время..."
+        "Ок, очищаю временные таблицы экспериментов."
     )
-    exp_ids = get_ugm_exps_list()
-    i = 1
-    max_i = len(exp_ids)
-    for exp_id in exp_ids:
+
+
+@app.message(re.compile(r"^\s*(ugm_exps|ugp_exps|ugg_exps)\s*$", re.IGNORECASE))
+def handle_all_ug_exp_message(message, logger):
+    text = message.get("text", "").strip().lower()
+    user = message.get("user")
+    logger.info("Incoming message from %s: %s", user, text)
+    event = message
+
+    # --- выбор типа экспериментов ---
+    if text == "ugm_exps":
+        exp_ids = get_ugm_exps_list()
+        exp_type = "монетизационные"
+    elif text == "ugp_exps":
+        exp_ids = get_ugp_exps_list()
+        exp_type = "Product"
+    elif text == "ugg_exps":
+        exp_ids = get_ugg_exps_list()
+        exp_type = "Growth"
+    else:
+        slack.send_event_reply(event, "Неизвестная команда")
+        return
+
+    # --- стартовое сообщение (создаёт thread) ---
+    thread_ts = slack.send_event_reply(
+        event,
+        f"Считаю все {exp_type} эксперименты. Это может занять некоторое время..."
+    )
+
+    retry_exps = []
+    failed_exps = []
+
+    total = len(exp_ids)
+
+    # --- первый проход ---
+    for i, exp_id in enumerate(exp_ids, 1):
         try:
             calculate_exp_info(exp_id)
-            result_text = (
-                f"*Посчитал experiment #{exp_id}*\n\n"
-                f"Посчитано {i}/{max_i}"
+
+            slack.reply_in_thread(
+                f"✅ Посчитал experiment #{exp_id} ({i}/{total})",
+                thread_ts=thread_ts
             )
-            slack.update_event_reply(event, progress_ts, result_text)
+
         except Exception as exc:
             logger.exception("Failed to calculate exp info for exp_id=%s", exp_id)
-            slack.update_event_reply(
-                event,
-                progress_ts,
-                f"Не удалось посчитать experiment #{exp_id}.\nОшибка: `{exc}`"
+            retry_exps.append(exp_id)
+
+            slack.reply_in_thread(
+                f"⚠️ Ошибка при расчёте experiment #{exp_id}, добавил в retry ({i}/{total})",
+                thread_ts=thread_ts
             )
-        i += 1
+
+    # --- retry ---
+    if retry_exps:
+        slack.reply_in_thread(
+            f"Повторно считаю {len(retry_exps)} экспериментов...",
+            thread_ts=thread_ts
+        )
+
+        for exp_id in retry_exps:
+            try:
+                calculate_exp_info(exp_id)
+
+                slack.reply_in_thread(
+                    f"✅ Retry успешен для experiment #{exp_id}",
+                    thread_ts=thread_ts
+                )
+
+            except Exception:
+                logger.exception("Retry failed for exp_id=%s", exp_id)
+                failed_exps.append(exp_id)
+
+    # --- финал ---
+    if failed_exps:
+        failed_list = ", ".join(map(str, failed_exps))
+
+        slack.reply_in_thread(
+            f"❌ Не удалось посчитать даже после retry:\n{failed_list}",
+            thread_ts=thread_ts
+        )
+    else:
+        slack.reply_in_thread(
+            "✅ Все эксперименты успешно посчитаны",
+            thread_ts=thread_ts
+        )
 
 
 @app.message(re.compile(r"(?i)^\s*exp\s*#\s*\d+\s*$"))
@@ -214,6 +285,7 @@ def process_agent_message(event: dict):
 
 @app.event("message")
 def handle_any_message(body, event, logger):
+    store.save_user_message(event, user_name=slack.get_user_label(event.get("user")))
     # Slack может присылать bot/system events.
     # Их лучше игнорировать, чтобы бот не отвечал сам себе.
     subtype = event.get("subtype")
