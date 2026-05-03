@@ -17,6 +17,11 @@ COPY clickhouse_supervisor.py /app/clickhouse_supervisor.py
 COPY slack_worker.py /app/slack_worker.py
 COPY stats.py /app/stats.py
 COPY chatgpt_agent_worker.py /app/chatgpt_agent_worker.py
+COPY airflow_worker.py /app/airflow_worker.py
+COPY conversation_store.py /app/conversation_store.py
+COPY heartbeat_worker.py /app/heartbeat_worker.py
+COPY service_readiness.py /app/service_readiness.py
+COPY missed_messages_worker.py /app/missed_messages_worker.py
 COPY docker /app/docker
 COPY queries /app/queries
 COPY metrics.yaml /app/metrics.yaml

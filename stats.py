@@ -193,7 +193,8 @@ def safe_divide(numerator, denominator):
 def calc_metrics_stats_by_variation_pairs(
     cumulative_df: pd.DataFrame,
     metrics_yaml_path: str,
-    control_variation=1,
+    control_variation: int = 1,
+    client: str = "",
 ) -> pd.DataFrame:
     df = cumulative_df.copy()
     df["dt"] = pd.to_datetime(df["dt"])
@@ -219,6 +220,9 @@ def calc_metrics_stats_by_variation_pairs(
         variance_col = metric_config.get("variance")
         distribution = metric_config.get("distribution")
         is_percentage = metric_config.get("percentage", False)
+        calc_platform = metric_config.get("platforms", [])
+        if client not in calc_platform:
+            continue
 
         required_cols = {"dt", "variation", numerator_col, denominator_col}
 
@@ -367,6 +371,7 @@ def calculate_exp_info(exp_id) -> tuple[dict[str, pd.DataFrame], dict[str, pd.Da
                 cumulative_df=df_cum_agg,
                 metrics_yaml_path="metrics.yaml",
                 control_variation=1,
+                client=client,
             )
             df_cum_agg = df_cum_agg.melt(id_vars=["dt", "variation"], var_name="metric", value_name="value")
             df_cum_agg["exp_id"] = exp_id

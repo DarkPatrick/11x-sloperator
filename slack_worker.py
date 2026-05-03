@@ -8,6 +8,7 @@ import pandas as pd
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
+from conversation_store import ConversationStore
 
 
 logger = logging.getLogger(__name__)
@@ -27,12 +28,72 @@ class SlackWorker:
         self,
         bot_token: Optional[str] = None,
         default_user_id: Optional[str] = None,
+        conversation_store: Optional[ConversationStore] = None,
     ) -> None:
         self.bot_token = bot_token or os.environ["SLACK_BOT_TOKEN"]
         self.default_user_id = default_user_id or os.environ.get("SLACK_NOTIFY_USER_ID")
 
         self.client = WebClient(token=self.bot_token)
         self._dm_channel_cache: dict[str, str] = {}
+        self._conversation_store = conversation_store
+        self._conversation_store_init_failed = False
+
+    @property
+    def conversation_store(self) -> Optional[ConversationStore]:
+        if self._conversation_store is not None:
+            return self._conversation_store
+
+        if self._conversation_store_init_failed:
+            return None
+
+        try:
+            self._conversation_store = ConversationStore()
+        except Exception:
+            self._conversation_store_init_failed = True
+            logger.exception("Failed to initialize ConversationStore")
+            return None
+
+        return self._conversation_store
+
+    def save_user_message(self, event: dict[str, Any]) -> None:
+        """
+        Persist incoming Slack user message to ClickHouse.
+        """
+        store = self.conversation_store
+        if store is None:
+            return
+
+        try:
+            store.save_user_message(event, user_name=self.get_user_label(event.get("user")))
+        except Exception:
+            logger.exception("Failed to save user message to conversation store")
+
+    def save_bot_message(
+        self,
+        *,
+        channel_id: str,
+        message_ts: str,
+        text: str,
+        thread_ts: Optional[str] = None,
+        reply_to_message_ts: Optional[str] = None,
+    ) -> None:
+        """
+        Persist outgoing Slack bot message to ClickHouse.
+        """
+        store = self.conversation_store
+        if store is None:
+            return
+
+        try:
+            store.save_bot_message(
+                channel_id=channel_id,
+                message_ts=message_ts,
+                text=text,
+                thread_ts=thread_ts,
+                reply_to_message_ts=reply_to_message_ts,
+            )
+        except Exception:
+            logger.exception("Failed to save bot message to conversation store")
 
     def get_dm_channel_id(self, user_id: Optional[str] = None, use_cache: bool = True) -> str:
         """
@@ -71,6 +132,7 @@ class SlackWorker:
         channel_id: str,
         text: str,
         thread_ts: Optional[str] = None,
+        reply_to_message_ts: Optional[str] = None,
         unfurl_links: bool = False,
         unfurl_media: bool = False,
     ) -> str:
@@ -92,6 +154,14 @@ class SlackWorker:
         ts = resp.get("ts")
         if not ts:
             raise SlackWorkerError("Slack response does not contain ts")
+
+        self.save_bot_message(
+            channel_id=channel_id,
+            message_ts=ts,
+            text=text,
+            thread_ts=thread_ts,
+            reply_to_message_ts=reply_to_message_ts,
+        )
 
         return ts
 
@@ -153,6 +223,8 @@ class SlackWorker:
         channel_id: str,
         ts: str,
         text: str,
+        thread_ts: Optional[str] = None,
+        reply_to_message_ts: Optional[str] = None,
     ) -> str:
         """
         Update existing Slack message. Returns ts.
@@ -170,6 +242,14 @@ class SlackWorker:
         updated_ts = resp.get("ts")
         if not updated_ts:
             raise SlackWorkerError("Slack update response does not contain ts")
+
+        self.save_bot_message(
+            channel_id=channel_id,
+            message_ts=updated_ts,
+            text=text,
+            thread_ts=thread_ts,
+            reply_to_message_ts=reply_to_message_ts,
+        )
 
         return updated_ts
 
@@ -224,7 +304,7 @@ class SlackWorker:
         except SlackApiError as exc:
             logger.exception("Slack auth_test failed")
             raise SlackWorkerError(f"Slack auth_test failed: {exc}") from exc
-    
+
     def get_thread_ts(self, event: dict[str, Any]) -> str:
         """
         Return thread_ts for replying in the same thread.
@@ -254,6 +334,7 @@ class SlackWorker:
             channel_id=channel_id,
             text=text,
             thread_ts=thread_ts,
+            reply_to_message_ts=event.get("ts"),
             unfurl_links=False,
             unfurl_media=False,
         )
@@ -271,6 +352,7 @@ class SlackWorker:
             channel_id=channel_id,
             text=text,
             thread_ts=None,
+            reply_to_message_ts=event.get("ts"),
             unfurl_links=False,
             unfurl_media=False,
         )
@@ -283,7 +365,13 @@ class SlackWorker:
         if not channel_id:
             raise SlackWorkerError("Event does not contain channel")
 
-        return self.update_message(channel_id=channel_id, ts=ts, text=text)
+        return self.update_message(
+            channel_id=channel_id,
+            ts=ts,
+            text=text,
+            thread_ts=self.get_thread_ts(event),
+            reply_to_message_ts=event.get("ts"),
+        )
 
     def format_table_for_slack(
         self,

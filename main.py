@@ -11,6 +11,7 @@ import logging
 import re
 from pathlib import Path
 import ssl
+from time import time
 import certifi
 from slack_sdk import WebClient
 from slack_bolt import App
@@ -21,7 +22,6 @@ from chatgpt_agent_worker import ChatGPTAgentWorker
 from slack_worker import SlackWorker, SlackWorkerError
 from clickhouse_worker import get_ugm_exps_list, get_ugp_exps_list, get_ugg_exps_list, clear_exp_temp_tables
 from stats import calculate_exp_info
-from conversation_store import ConversationStore
 
 
 
@@ -32,6 +32,7 @@ VPN_RECONNECT_REQUEST_PATH = os.environ.get(
 )
 
 VPN_RECONNECT_RE = re.compile(r"^\s*vpn\s+reconnect\s*$", re.IGNORECASE)
+SLACK_NOTIFY_USER_ID = os.environ.get("SLACK_NOTIFY_USER_ID", "")
 
 
 logger = logging.getLogger(__name__)
@@ -44,9 +45,6 @@ slack = SlackWorker()
 agent = ChatGPTAgentWorker(slack=slack)
 
 executor = ThreadPoolExecutor(max_workers=2)
-
-store = ConversationStore()
-
 
 
 def request_vpn_reconnect() -> None:
@@ -74,11 +72,15 @@ def handle_clear_exp_temp_tables_message(message, logger):
     logger.info("Incoming message from %s: %s", user, text)
     event = message
 
-    clear_exp_temp_tables()
     slack.send_event_reply(
         event,
         "Ок, очищаю временные таблицы экспериментов."
     )
+    clear_exp_temp_tables()
+    slack.reply_in_thread(
+        "Готово, все временные таблицы удалены.",
+        thread_ts=event.get("ts")
+    )    
 
 
 # @app.message(re.compile(r"^\s*(ugm_exps|ugp_exps|ugg_exps)\s*$", re.IGNORECASE))
@@ -285,10 +287,11 @@ def process_agent_message(event: dict):
 
 @app.event("message")
 def handle_any_message(body, event, logger):
-    store.save_user_message(event, user_name=slack.get_user_label(event.get("user")))
     subtype = event.get("subtype")
     if subtype:
         return
+
+    slack.save_user_message(event)
 
     text = event.get("text", "").strip()
     if not text:
@@ -311,13 +314,16 @@ def handle_any_message(body, event, logger):
         if not is_bot_mentioned(text, os.environ.get("SLACK_BOT_ID", "")):
             return
 
+    # temp fiter to work only for me
+    if event.get("user") != SLACK_NOTIFY_USER_ID:
+        return
     logger.info("Incoming user message: %s", text)
 
     executor.submit(process_agent_message, event)
 
 
-
 if __name__ == "__main__":
     print("starting slack socket mode...", flush=True)
+
     handler = SocketModeHandler(app, os.environ["SLACK_BOT_SOCKET_TOKEN_ID"])
     handler.start()
