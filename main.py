@@ -54,7 +54,7 @@ def request_vpn_reconnect() -> None:
         f.write("1")
 
 
-@app.message(VPN_RECONNECT_RE)
+# @app.message(VPN_RECONNECT_RE)
 def handle_vpn_reconnect_message(message, logger):
     text = message.get("text", "")
     user = message.get("user")
@@ -67,7 +67,7 @@ def handle_vpn_reconnect_message(message, logger):
         "Ок, запускаю новую попытку VPN-подключения."
     )
 
-@app.message("clear_exp_temp_tables")
+# @app.message("clear_exp_temp_tables")
 def handle_clear_exp_temp_tables_message(message, logger):
     text = message.get("text", "")
     user = message.get("user")
@@ -81,7 +81,7 @@ def handle_clear_exp_temp_tables_message(message, logger):
     )
 
 
-@app.message(re.compile(r"^\s*(ugm_exps|ugp_exps|ugg_exps)\s*$", re.IGNORECASE))
+# @app.message(re.compile(r"^\s*(ugm_exps|ugp_exps|ugg_exps)\s*$", re.IGNORECASE))
 def handle_all_ug_exp_message(message, logger):
     text = message.get("text", "").strip().lower()
     user = message.get("user")
@@ -167,7 +167,7 @@ def handle_all_ug_exp_message(message, logger):
         )
 
 
-@app.message(re.compile(r"(?i)^\s*exp\s*#\s*\d+\s*$"))
+# @app.message(re.compile(r"(?i)^\s*exp\s*#\s*\d+\s*$"))
 def handle_exp_message(message, logger):
     text = message.get("text", "")
     user = message.get("user")
@@ -286,14 +286,25 @@ def process_agent_message(event: dict):
 @app.event("message")
 def handle_any_message(body, event, logger):
     store.save_user_message(event, user_name=slack.get_user_label(event.get("user")))
-    # Slack может присылать bot/system events.
-    # Их лучше игнорировать, чтобы бот не отвечал сам себе.
     subtype = event.get("subtype")
     if subtype:
         return
 
     text = event.get("text", "").strip()
     if not text:
+        return
+
+    if EXP_RE.match(text):
+        handle_exp_message(event, logger)
+        return
+    if VPN_RECONNECT_RE.match(text):
+        handle_vpn_reconnect_message(event, logger)
+        return
+    if text.lower() == "clear_exp_temp_tables":
+        handle_clear_exp_temp_tables_message(event, logger)
+        return
+    if re.match(r"^\s*(ugm_exps|ugp_exps|ugg_exps)\s*$", text, re.IGNORECASE):
+        handle_all_ug_exp_message(event, logger)
         return
     
     if not is_dm(event):
