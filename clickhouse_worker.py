@@ -16,6 +16,7 @@ import datetime
 import clickhouse_connect
 from clickhouse_connect.driver.exceptions import ClickHouseError
 import logging
+from metabase_worker import Mb_Client
 
 
 
@@ -24,6 +25,14 @@ MAX_SAFE_JS_INT = 2**53 - 1
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+
+mb_client = Mb_Client(
+    url=os.environ["METABASE_URL"],
+    username=os.environ["METABASE_USERNAME"],
+    password=os.environ["METABASE_PASSWORD"],
+    api_key=os.environ.get("METABASE_API_KEY", "")
+)
 
 
 
@@ -258,6 +267,7 @@ def prepare_df_for_clickhouse(df):
         'arpu_var',
         'lifetime_arpu_var',
         'arppu_var',
+        'subscriptions_per_user_var',
     ]
 
     for col in string_columns:
@@ -610,3 +620,8 @@ def clear_exp_temp_tables() -> None:
     tables = df['table_name'].tolist()
     for table in tables:
         drop_table(f"sandbox.{table}")
+
+
+def get_mb_user(id: int) -> dict:
+    user = mb_client.get_user_by_id(id)
+    return user

@@ -64,6 +64,10 @@ def calc_cumulative_aggregates(df: pd.DataFrame) -> pd.DataFrame:
             "count_col": "buyer_cnt",
             "revenue_col": "revenue",
         },
+        "subscriptions_per_user_var": {
+            "count_col": "members",
+            "revenue_col": "subscriptions_cnt",
+        }
     }
 
     var_cols = set(var_config.keys())
@@ -396,4 +400,3 @@ def calculate_exp_info(exp_id) -> tuple[dict[str, pd.DataFrame], dict[str, pd.Da
                 drop_exp_partitions(exp_id, client_name=client, segment=segment_name, table_name="ug_exp_stats")
                 update_exp_results_table(df_cum_agg, table="ug_exp_stats")
     return df_tot, df_cum_agg_tot, stats_df_tot, f"exp_users_table={exp_users_table}, subscription_table={subscription_table}"
-

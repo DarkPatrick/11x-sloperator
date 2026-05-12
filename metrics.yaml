@@ -109,3 +109,11 @@ members -> install, %:
   - distribution: "bernoulli"
   - platforms: ["UG_WEB"]
   - description: "conversion rate from users in mobweb to users who installed the app"
+
+subscriptions per user:
+  - numerator: subscriptions_cnt
+  - denominator: members
+  - percentage: false
+  - variance: subscriptions_per_user_var
+  - platforms: ["UG_WEB", "UG_IOS", "UG_ANDROID", "UGT_ANDROID", "UGT_IOS"]
+  - description: "average number of subscriptions per user"

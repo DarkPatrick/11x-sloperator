@@ -54,6 +54,7 @@ def wait_for_reconnect_approval(cycle_id: int, ever_connected: bool) -> None:
     )
 
     print("[supervisor] waiting for manual reconnect approval", flush=True)
+    last_status_log = time.time()
 
     while True:
         if os.path.exists(VPN_RECONNECT_REQUEST_PATH):
@@ -61,7 +62,11 @@ def wait_for_reconnect_approval(cycle_id: int, ever_connected: bool) -> None:
             print("[supervisor] reconnect approved", flush=True)
             return
 
-        time.sleep(5)
+        if time.time() - last_status_log > 30:
+            print("[supervisor] still waiting for vpn reconnect request", flush=True)
+            last_status_log = time.time()
+
+        time.sleep(1)
 
 
 def write_vpn_state(
@@ -136,24 +141,38 @@ def maybe_send_url(line: str, thread_ts: str) -> bool:
             if match:
                 url = match.group(0)
                 url = url.rstrip('").]\'')
-            # send_dm(
-            #     f"Нужно завершить VPN-авторизацию.\nОткрой ссылку:\n{url}",
-            #     thread_ts
-            # )
-            slack.reply_in_thread(
-                f"Нужно завершить VPN-авторизацию.\nОткрой ссылку:\n{url}",
-                thread_ts=thread_ts
-            )
-            sent_url = True
+            try:
+                slack.reply_in_thread(
+                    f"Нужно завершить VPN-авторизацию.\nОткрой ссылку:\n{url}",
+                    thread_ts=thread_ts
+                )
+                print(f"[supervisor] sent auth URL: {url}", flush=True)
+                sent_url = True
+            except Exception as e:
+                print(f"[supervisor] failed to send auth URL: {e}", flush=True)
     return sent_url
 
 def run_sql_after_connect(thread_ts: str) -> None:
     try:
         result = execute_sql("SELECT 42")
-        # send_dm(f"VPN подключён. ClickHouse доступен.\nРезультат теста: {result}", thread_ts)
-        slack.reply_in_thread(f"VPN подключён. ClickHouse доступен.\nРезультат теста: {result}", thread_ts=thread_ts)
+        safe_reply_in_thread(f"VPN подключён. ClickHouse доступен.\nРезультат теста: {result}", thread_ts=thread_ts)
     except Exception as e:
-        slack.reply_in_thread(f"VPN поднялся, но запрос в ClickHouse не выполнился:\n{e}", thread_ts=thread_ts)
+        safe_reply_in_thread(f"VPN поднялся, но запрос в ClickHouse не выполнился:\n{e}", thread_ts=thread_ts)
+
+
+def safe_reply_in_thread(text: str, thread_ts: Optional[str]) -> None:
+    if thread_ts:
+        try:
+            slack.reply_in_thread(text, thread_ts=thread_ts)
+            return
+        except Exception as exc:
+            print(f"[supervisor] reply_in_thread failed: {exc}", flush=True)
+
+    try:
+        slack.start_thread_in_dm(text)
+    except Exception as exc:
+        print(f"[supervisor] failed to start fallback DM thread: {exc}", flush=True)
+
 
 def supervise() -> None:
     cycle_id = 0
@@ -173,8 +192,10 @@ def supervise() -> None:
 
         # thread_ts = send_dm("Запускаю VPN-подключение.")
         thread_ts = slack.start_thread_in_dm("Запускаю VPN-подключение.")
+        print("[supervisor] started VPN connection thread", flush=True)
 
         proc = start_openvpn()
+        start_time = time.time()
 
         try:
             wait_for_socket(VPN_MGMT_SOCK, timeout=30)
@@ -193,6 +214,9 @@ def supervise() -> None:
                 if proc.poll() is not None:
                     raise RuntimeError(f"OpenVPN process exited with code {proc.returncode}")
 
+                if not vpn_up and time.time() - start_time > 300:
+                    raise RuntimeError("VPN connection timeout - no connection after 5 minutes")
+
                 try:
                     data = sock.recv(65536).decode("utf-8", errors="replace")
                 except socket.timeout:
@@ -209,7 +233,6 @@ def supervise() -> None:
 
                     print(f"[mgmt] {line}", flush=True)
                     if not vpn_up and not sent_url:
-                        # maybe_send_url(line, sent_urls)
                         write_vpn_state(
                             connected=False,
                             ever_connected=ever_connected,
@@ -228,21 +251,17 @@ def supervise() -> None:
                                 cycle_id=cycle_id,
                                 status="connected",
                             )
-                            # send_dm("VPN подключён.", thread_ts)
-                            slack.reply_in_thread("VPN подключён.", thread_ts=thread_ts)
+                            safe_reply_in_thread("VPN подключён.", thread_ts=thread_ts)
                             # if SQL_ON_CONNECT:
                             #     run_sql_after_connect(thread_ts=thread_ts)
 
-                    # типичные состояния на разрыв/переподключение
                     if "RECONNECTING" in line or "TCP/UDP: Closing socket" in line:
                         if vpn_up:
-                            # send_dm("VPN-соединение потеряно. Пытаюсь подключиться заново.", thread_ts=thread_ts)
-                            slack.reply_in_thread("VPN-соединение потеряно. Пытаюсь подключиться заново.", thread_ts=thread_ts)
-                        raise RuntimeError("VPN reconnect required")
+                            safe_reply_in_thread("VPN-соединение потеряно. Пытаюсь подключиться заново.", thread_ts=thread_ts)
+                            raise RuntimeError("VPN reconnect required")
 
                     if "AUTH_FAILED" in line:
-                        # send_dm("VPN отверг аутентификацию. Запускаю новый цикл подключения.", thread_ts=thread_ts)
-                        slack.reply_in_thread("VPN отверг аутентификацию. Запускаю новый цикл подключения.", thread_ts=thread_ts)
+                        safe_reply_in_thread("VPN отверг аутентификацию. Запускаю новый цикл подключения.", thread_ts=thread_ts)
                         raise RuntimeError("VPN auth failed")
 
         except Exception as e:
@@ -266,7 +285,7 @@ def supervise() -> None:
             # slack.reply_in_thread(f"VPN отключён или перезапускается.\nПричина: {e}", thread_ts=thread_ts)
             # thread_ts = None
             # time.sleep(RESTART_DELAY)
-            slack.reply_in_thread(
+            safe_reply_in_thread(
                 "VPN отключён.\n"
                 f"Причина: {e}\n\n"
                 "Когда будешь готов пройти авторизацию, напиши боту: `vpn reconnect`",

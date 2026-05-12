@@ -1,3 +1,5 @@
+# TODO: распределение подписок по продуктам
+
 # на ubuntu
 # docker compose up -d --build
 # docker compose logs -f
@@ -20,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from chatgpt_agent_worker import ChatGPTAgentWorker
 
 from slack_worker import SlackWorker, SlackWorkerError
-from clickhouse_worker import get_ugm_exps_list, get_ugp_exps_list, get_ugg_exps_list, clear_exp_temp_tables
+from clickhouse_worker import get_ugm_exps_list, get_ugp_exps_list, get_ugg_exps_list, clear_exp_temp_tables, get_mb_user
 from stats import calculate_exp_info
 
 
@@ -33,6 +35,7 @@ VPN_RECONNECT_REQUEST_PATH = os.environ.get(
 
 VPN_RECONNECT_RE = re.compile(r"^\s*vpn\s+reconnect\s*$", re.IGNORECASE)
 SLACK_NOTIFY_USER_ID = os.environ.get("SLACK_NOTIFY_USER_ID", "")
+MB_USER_RE = re.compile(r"^\s*mb\s+user\s+(\d+)\s*$", re.IGNORECASE)
 
 
 logger = logging.getLogger(__name__)
@@ -56,14 +59,16 @@ def request_vpn_reconnect() -> None:
 def handle_vpn_reconnect_message(message, logger):
     text = message.get("text", "")
     user = message.get("user")
-    logger.info("Incoming message from %s: %s", user, text)
+    logger.info("handle_vpn_reconnect_message called with text: %r from user %s", text, user)
     event = message
 
     request_vpn_reconnect()
+    logger.info("VPN reconnect request file created")
     slack.send_event_reply(
         event,
         "Ок, запускаю новую попытку VPN-подключения."
     )
+    logger.info("VPN reconnect reply sent")
 
 # @app.message("clear_exp_temp_tables")
 def handle_clear_exp_temp_tables_message(message, logger):
@@ -87,7 +92,7 @@ def handle_clear_exp_temp_tables_message(message, logger):
 def handle_all_ug_exp_message(message, logger):
     text = message.get("text", "").strip().lower()
     user = message.get("user")
-    logger.info("Incoming message from %s: %s", user, text)
+    logger.info("handle_all_ug_exp_message called with text: %r from user %s", text, user)
     event = message
 
     # --- выбор типа экспериментов ---
@@ -297,28 +302,60 @@ def handle_any_message(body, event, logger):
     if not text:
         return
 
+    # Log raw text for debugging routing issues
+    logger.info("Message received: user=%s text=%r", event.get("user"), text)
+
     if EXP_RE.match(text):
+        logger.info("Matched EXP_RE pattern")
         handle_exp_message(event, logger)
         return
+    
     if VPN_RECONNECT_RE.match(text):
+        logger.info("Matched VPN_RECONNECT_RE pattern")
         handle_vpn_reconnect_message(event, logger)
         return
+    
     if text.lower() == "clear_exp_temp_tables":
+        logger.info("Matched clear_exp_temp_tables")
         handle_clear_exp_temp_tables_message(event, logger)
         return
+    
     if re.match(r"^\s*(ugm_exps|ugp_exps|ugg_exps)\s*$", text, re.IGNORECASE):
+        logger.info("Matched experiment list pattern")
         handle_all_ug_exp_message(event, logger)
         return
+
+    if MB_USER_RE.match(text):
+        logger.info("Matched MB_USER_RE pattern")
+        match = MB_USER_RE.match(text)
+        if not match:
+            logger.error("MB_USER_RE matched but no group found, this should not happen")
+            slack.send_event_reply(event, "Unexpected error parsing command")
+            return
+        mb_user_id = int(match.group(1))
+        try:
+            mb_user_info = get_mb_user(mb_user_id)
+            answer = f"Metabase user info for ID {mb_user_id}:\n```{mb_user_info}```"
+        except Exception as exc:
+            logger.exception("Failed to get Metabase user info for ID %s", mb_user_id)
+            answer = f"Failed to get Metabase user info for ID {mb_user_id}: `{exc}`"
+        
+        slack.send_event_reply(event, answer)
+        return
+    
+    logger.info("No command pattern matched, checking if should process as agent message")
     
     if not is_dm(event):
         if not is_bot_mentioned(text, os.environ.get("SLACK_BOT_ID", "")):
+            logger.info("Not a DM and bot not mentioned, ignoring")
             return
 
-    # temp fiter to work only for me
+    # temp filter to work only for me
     if event.get("user") != SLACK_NOTIFY_USER_ID:
+        logger.info("Message from different user, ignoring")
         return
-    logger.info("Incoming user message: %s", text)
-
+    
+    logger.info("Processing as agent message: %s", text)
     executor.submit(process_agent_message, event)
 
 

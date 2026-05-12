@@ -22,6 +22,7 @@ COPY conversation_store.py /app/conversation_store.py
 COPY heartbeat_worker.py /app/heartbeat_worker.py
 COPY service_readiness.py /app/service_readiness.py
 COPY missed_messages_worker.py /app/missed_messages_worker.py
+COPY metabase_worker.py /app/metabase_worker.py
 COPY docker /app/docker
 COPY queries /app/queries
 COPY metrics.yaml /app/metrics.yaml

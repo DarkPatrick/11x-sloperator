@@ -66,6 +66,7 @@
         uniqIf((`sta`.`subscription_id`, `sta`.`product_id`), `sta`.`subscribed_dt` between `eut`.`exp_start_dt` and `eut`.`exp_start_dt` + 604800 and `sta`.`trial` > 0 and not (toDate(`sta`.`charge_dt`) = toDate(`sta`.`subscribed_dt`)) and `sta`.`cancel_dt` < `sta`.`subscribed_dt` and `sta`.`first_charge_expected_dt` > toUnixTimestamp(now()) and `sta`.`is_otp` = 0) as `pending_trial_cnt`,
         uniqIf((`sta`.`subscription_id`, `sta`.`product_id`), `sta`.`subscribed_dt` between `eut`.`exp_start_dt` and `eut`.`exp_start_dt` + 604800 and `sta`.`is_otp` = 1) as `access_otp_cnt`,
         `access_instant_cnt` + `access_ex_trial_cnt` + `access_trial_cnt` as `subscriptions_cnt`,
+        any(`spu`.`subscriptions_per_user_var`) as `subscriptions_per_user_var`,
         `subscriptions_cnt` + `access_otp_cnt` as `access_cnt`,
 
         uniqIf((`sta`.`subscription_id`, `sta`.`product_id`), `sta`.`subscribed_dt` between `eut`.`exp_start_dt` and `eut`.`exp_start_dt` + 604800 and `sta`.`trial` > 0 and not (toDate(`sta`.`charge_dt`) = toDate(`sta`.`subscribed_dt`)) and `sta`.`charge_dt` between `sta`.`subscribed_dt` and `sta`.`first_charge_expected_dt`+ 86400 and `sta`.`is_otp` = 0) as `charged_trial_cnt`,
@@ -106,9 +107,43 @@
     )as `sta`
     on
         `eut`.`unified_id` = `sta`.`unified_id`
+    left join (
+        select
+            `dt`,
+            `variation`,
+            varSamp(`subscriptions_per_user_cnt`) as `subscriptions_per_user_var`
+        from (
+            select
+                toDate(`eut`.`exp_start_dt`) as `dt`,
+                `eut`.`variation` as `variation`,
+                `eut`.`unified_id` as `unified_id`,
+                uniqIf((`sta`.`subscription_id`, `sta`.`product_id`), `sta`.`subscribed_dt` between `eut`.`exp_start_dt` and `eut`.`exp_start_dt` + 604800 and `sta`.`is_otp` = 0) as `subscriptions_per_user_cnt`
+            from (
+                select distinct *
+                from {exp_users_table}
+            ) as `eut`
+            left join (
+                select distinct *
+                from {subscription_table}
+            ) as `sta`
+            on
+                `eut`.`unified_id` = `sta`.`unified_id`
+            group by
+                `dt`,
+                `variation`,
+                `unified_id`
+        )
+        group by
+            `dt`,
+            `variation`
+    ) as `spu`
+    on
+        toDate(`eut`.`exp_start_dt`) = `spu`.`dt`
+    and
+        `eut`.`variation` = `spu`.`variation`
     group by
-        `dt`,
-        `variation`
+        toDate(`eut`.`exp_start_dt`),
+        `eut`.`variation`
     order by
         `dt`,
         `variation`

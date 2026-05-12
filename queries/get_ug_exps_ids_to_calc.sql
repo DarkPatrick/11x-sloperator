@@ -14,4 +14,4 @@ and (
 and
     `aex`.`archive` = 0
 and
-    `aex`.`id` not in (4899, 5442, 6494)
+    `aex`.`id` not in (4899, 5442, 6494, 6497)
