@@ -1,4 +1,5 @@
 # TODO: распределение подписок по продуктам
+# TODO: для активных подписок сделать метрику отмен/чарджей (сейчас есть только для триалов)
 
 # на ubuntu
 # docker compose up -d --build
@@ -290,13 +291,19 @@ def process_agent_message(event: dict):
             slack.send_event_reply(event, error_text)
 
 
-@app.event("message")
-def handle_any_message(body, event, logger):
+def process_message_event(
+    event: dict,
+    logger: logging.Logger,
+    *,
+    save_message: bool = True,
+    process_agent_async: bool = True,
+) -> None:
     subtype = event.get("subtype")
     if subtype:
         return
 
-    slack.save_user_message(event)
+    if save_message:
+        slack.save_user_message(event)
 
     text = event.get("text", "").strip()
     if not text:
@@ -356,7 +363,15 @@ def handle_any_message(body, event, logger):
         return
     
     logger.info("Processing as agent message: %s", text)
-    executor.submit(process_agent_message, event)
+    if process_agent_async:
+        executor.submit(process_agent_message, event)
+    else:
+        process_agent_message(event)
+
+
+@app.event("message")
+def handle_any_message(body, event, logger):
+    process_message_event(event, logger)
 
 
 if __name__ == "__main__":
