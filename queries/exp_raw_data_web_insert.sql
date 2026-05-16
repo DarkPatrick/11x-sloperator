@@ -34,6 +34,10 @@ left join
     {exp_users_table} as `eut`
 on
     `urew`.`unified_id` = `eut`.`unified_id`
+and
+    `eut`.`client` = {client_sql}
+and
+    `eut`.`segment` = {segment_sql}
 where
     `urew`.`date` = `date_filter`
 and

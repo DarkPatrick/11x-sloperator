@@ -357,16 +357,15 @@ def calculate_exp_info(exp_id) -> tuple[dict[str, pd.DataFrame], dict[str, pd.Da
             # log start calulation with exp_info for debugging
             logger.info("Calculating experiment info for exp_id=%s with exp_info:\n%s", exp_id, exp_info)
             logger.info("loading users...")
-            exp_users_table: str = create_experiment_users_table(exp_info, client, segment)
+            exp_users_table: str = create_experiment_users_table(exp_info, client, segment_name, segment)
             logger.info("loading subscriptions...")
             subscription_table: str = create_experiments_subscription_table(exp_info, client, segment)
             logger.info("exp_users_table:\n%s, subscription_table: %s", exp_users_table, subscription_table)
             logger.info("loading exp monetization metrics...")
-            df: pd.DataFrame = get_monetization_metrics(exp_info, exp_users_table, subscription_table)
+            df: pd.DataFrame = get_monetization_metrics(exp_info, exp_users_table, subscription_table, client, segment_name)
             df_tot[(client, segment_name)] = df
 
-            logger.info("deleteing temp tables...")
-            drop_table(exp_users_table)
+            logger.info("deleteing temp subscription table...")
             drop_table(subscription_table)
             logger.info("calculating cumulative aggregates...")
             df_cum_agg = calc_cumulative_aggregates(df)

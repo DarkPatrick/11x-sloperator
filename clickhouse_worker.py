@@ -437,21 +437,52 @@ def generate_sql_rights_filter(rights_type: str, rights: str):
         return rights_dict[rights]
 
 
-def create_experiment_users_table(exp_info: dict, client: str, segment: dict) -> str:
-    session_id = generate_random_id(32)
+def _clickhouse_string_literal(value: str) -> str:
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _wrap_exp_users_query(query: str, client: str, segment_name: str) -> str:
+    return f"""
+        select
+            *,
+            {_clickhouse_string_literal(client)} as `client`,
+            {_clickhouse_string_literal(segment_name)} as `segment`
+        from (
+            {query}
+        )
+    """
+
+
+def _should_insert_exp_users_day(table_name: str, current_day: datetime.datetime, client: str, segment_name: str) -> bool:
+    current_day_str = current_day.strftime("%Y-%m-%d")
+    query = f"""
+        select
+            countIf(toDate(`exp_start_dt`, 'UTC') = toDate('{current_day_str}')) as `rows_for_day`,
+            max(toDate(`exp_start_dt`, 'UTC')) as `max_dt`
+        from {table_name}
+        where
+            `client` = {_clickhouse_string_literal(client)}
+        and
+            `segment` = {_clickhouse_string_literal(segment_name)}
+    """
+    df = execute_sql(query)
+    rows_for_day = int(df["rows_for_day"].iloc[0] or 0)
+    max_dt = df["max_dt"].iloc[0]
+
+    if rows_for_day == 0:
+        return True
+    if pd.isna(max_dt):
+        return True
+
+    return str(max_dt)[:10] == current_day_str
+
+
+def create_experiment_users_table(exp_info: dict, client: str, segment_name: str, segment: dict) -> str:
     exp_id = exp_info["id"]
     exp_start_dt = datetime.datetime.fromtimestamp(exp_info["date_start"], datetime.timezone.utc)
-    table_name = f'exp_users_{exp_id}_{session_id}'
-    
-    query_part_1 = get_query(
-        "create_table_template", 
-        params=dict({
-            "table_name": table_name, 
-            "schema": "",
-            "partition": "toYYYYMM(toDate(exp_start_dt))", 
-            "sorting": "exp_start_dt"
-        })
-    )
+    table_name = f'exp_users_{exp_id}'
+    full_table_name = f"sandbox.ug_monetization_sloperator_{table_name}"
+
     # where_filter: str = "1"
     where_filter: str = segment.get("uwf", "1")
     if exp_info["experiment_event_start"] == "App Experiment Start":
@@ -465,41 +496,52 @@ def create_experiment_users_table(exp_info: dict, client: str, segment: dict) ->
     practice_rights = generate_sql_rights_filter("edu", segment.get("practice_rights", "all").lower())
     book_rights = generate_sql_rights_filter("edu", segment.get("book_rights", "all").lower())
     having_filter += f" and ({pro_rights} and {edu_rights} and {sing_rights} and {practice_rights} and {book_rights})"
-    if "UG_WEB" in exp_info["clients_list"]:
-        query_part_2 = get_query(
-            "exp_raw_data_web", 
+
+    is_exists = execute_sql(f"exists {full_table_name}")
+    if int(is_exists.iloc[0].values[0]) == 0:
+        query_part_1 = get_query(
+            "create_table_template",
+            params=dict({
+                "table_name": table_name,
+                "schema": "",
+                "partition": "toYYYYMM(toDate(exp_start_dt)), client, segment",
+                "sorting": "client, segment, exp_start_dt"
+            })
+        )
+        seed_query_name = "exp_raw_data_web" if "UG_WEB" in exp_info["clients_list"] else "exp_raw_data_app"
+        seed_query = get_query(
+            seed_query_name,
             params={
-                "exp_id": exp_id, 
-                "where_sql": where_filter, 
+                "exp_id": exp_id,
+                "where_sql": where_filter,
                 "having_sql": having_filter,
                 "date_filter": exp_start_dt.strftime("%Y-%m-%d"),
                 "client": client
             }
         )
-    else:
-        query_part_2 = get_query(
-            "exp_raw_data_app", 
-            params={
-                "exp_id": exp_id, 
-                "where_sql": where_filter, 
-                "having_sql": having_filter,
-                "date_filter": exp_start_dt.strftime("%Y-%m-%d"),
-                "client": client
-            }
-        )
-    query = query_part_1 + "\n as \n" + query_part_2
-    # log query for debugging
-    logger.info("Creating experiment users table with query:\n%s", query)
-    execute_sql_modify(query)
+        query_part_2 = _wrap_exp_users_query(seed_query, client, segment_name)
+        query = query_part_1 + "\n as \n select * from (\n" + query_part_2 + "\n) where 0"
+        logger.info("Creating experiment users table with query:\n%s", query)
+        execute_sql_modify(query)
     
     exp_end_dt = datetime.datetime.now(datetime.timezone.utc)
     if exp_info["date_end"] > exp_info["date_start"]:
         exp_end_dt = datetime.datetime.fromtimestamp(exp_info["date_end"], datetime.timezone.utc)
     days_cnt = (exp_end_dt.date() - exp_start_dt.date()).days
-    for day in range(days_cnt):
+    for day in range(days_cnt + 1):
         logger.info("calculating query for day %s", day)
-        current_day = exp_start_dt + datetime.timedelta(days=day+1)
-        query_part_1 = f"insert into sandbox.ug_monetization_sloperator_{table_name}"
+        current_day = exp_start_dt + datetime.timedelta(days=day)
+        if not _should_insert_exp_users_day(full_table_name, current_day, client, segment_name):
+            logger.info(
+                "Skipping users insert for exp_id=%s, client=%s, segment=%s, date=%s",
+                exp_id,
+                client,
+                segment_name,
+                current_day.strftime("%Y-%m-%d"),
+            )
+            continue
+
+        query_part_1 = f"insert into {full_table_name}"
         if "UG_WEB" in exp_info["clients_list"]:
             query_part_2 = get_query(
                 "exp_raw_data_web_insert", 
@@ -508,8 +550,10 @@ def create_experiment_users_table(exp_info: dict, client: str, segment: dict) ->
                     "where_sql": where_filter, 
                     "having_sql": having_filter,
                     "date_filter": current_day.strftime("%Y-%m-%d"),
-                    "exp_users_table": f"sandbox.ug_monetization_sloperator_{table_name}",
-                    "client": client
+                    "exp_users_table": full_table_name,
+                    "client": client,
+                    "client_sql": _clickhouse_string_literal(client),
+                    "segment_sql": _clickhouse_string_literal(segment_name),
                 }
             )
         else:
@@ -520,15 +564,17 @@ def create_experiment_users_table(exp_info: dict, client: str, segment: dict) ->
                     "where_sql": where_filter, 
                     "having_sql": having_filter,
                     "date_filter": current_day.strftime("%Y-%m-%d"),
-                    "exp_users_table": f"sandbox.ug_monetization_sloperator_{table_name}",
-                    "client": client
+                    "exp_users_table": full_table_name,
+                    "client": client,
+                    "client_sql": _clickhouse_string_literal(client),
+                    "segment_sql": _clickhouse_string_literal(segment_name),
                 }
             )
-        query = query_part_1 + "\n" + query_part_2
+        query = query_part_1 + "\n" + _wrap_exp_users_query(query_part_2, client, segment_name)
         logger.info("inserting experiment users table with query:\n%s", query)
         execute_sql_modify(query)
 
-    return f"sandbox.ug_monetization_sloperator_{table_name}"
+    return full_table_name
 
 def create_experiments_subscription_table(exp_info: dict, client: str, segment: dict) -> str:
     session_id = generate_random_id(32)
@@ -572,8 +618,22 @@ def drop_table(table_name: str) -> None:
     execute_sql_modify(query)
     return None
 
-def get_monetization_metrics(exp_info: dict, exp_users_table: str, subscription_table: str) -> pd.DataFrame:
-    query = get_query("monetization_metrics", params={"exp_users_table": exp_users_table, "subscription_table": subscription_table})
+def get_monetization_metrics(
+    exp_info: dict,
+    exp_users_table: str,
+    subscription_table: str,
+    client: str,
+    segment_name: str,
+) -> pd.DataFrame:
+    query = get_query(
+        "monetization_metrics",
+        params={
+            "exp_users_table": exp_users_table,
+            "subscription_table": subscription_table,
+            "client_sql": _clickhouse_string_literal(client),
+            "segment_sql": _clickhouse_string_literal(segment_name),
+        }
+    )
     logger.info("total query:\n%s", query)
     df = execute_sql(query)
     return df

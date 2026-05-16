@@ -100,6 +100,10 @@
     from (
         select distinct *
         from {exp_users_table}
+        where
+            `client` = {client_sql}
+        and
+            `segment` = {segment_sql}
     ) as `eut`
     left join (
         select distinct *
@@ -121,6 +125,10 @@
             from (
                 select distinct *
                 from {exp_users_table}
+                where
+                    `client` = {client_sql}
+                and
+                    `segment` = {segment_sql}
             ) as `eut`
             left join (
                 select distinct *
